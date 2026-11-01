@@ -2,6 +2,14 @@
 
 return [
 
+    'catalog' => [
+        'ca_bundle' => env('CATALOG_CA_BUNDLE') ?: true,
+    ],
+
+    'tmdb' => [
+        'token' => env('TMDB_READ_ACCESS_TOKEN'),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Third Party Services
