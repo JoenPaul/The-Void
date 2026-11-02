@@ -88,4 +88,42 @@ class PlaybackTest extends TestCase
         $this->getJson('/playback/tvmaze:42')->assertStatus(503);
         $this->getJson('/playback/movie:42')->assertOk();
     }
+
+    public function test_season_episodes_distinguish_released_future_and_unknown_dates(): void
+    {
+        $this->travelTo(now('UTC')->setDate(2026, 11, 2)->startOfDay());
+        Http::fake(['api.themoviedb.org/3/tv/42/season/1' => Http::response(['episodes' => [
+            ['episode_number' => 1, 'name' => 'Pilot', 'air_date' => '2026-10-26'],
+            ['episode_number' => 2, 'name' => 'Today', 'air_date' => '2026-11-02'],
+            ['episode_number' => 3, 'name' => 'Next', 'air_date' => '2026-11-03'],
+            ['episode_number' => 4, 'name' => 'Unknown', 'air_date' => null],
+            ['episode_number' => 5, 'air_date' => '2026-99-01'],
+            ['episode_number' => -1, 'name' => 'Invalid'],
+        ]])]);
+        $this->getJson('/playback/tv/42/season/1')->assertOk()->assertJsonCount(5, 'episodes')
+            ->assertJsonPath('released_count', 2)->assertJsonPath('episodes.0.released', true)
+            ->assertJsonPath('episodes.1.released', true)->assertJsonPath('episodes.2.released', false)
+            ->assertJsonPath('episodes.3.air_date', null)->assertJsonPath('episodes.4.released', false)
+            ->assertDontSee('private-test-token');
+        $this->travelTo(now('UTC')->addDay());
+        $this->getJson('/playback/tv/42/season/1')->assertOk()->assertJsonPath('released_count', 3);
+        $this->travelBack();
+    }
+
+    public function test_season_metadata_is_cached_and_invalid_requests_and_provider_failures_are_safe(): void
+    {
+        $failing = false;
+        Http::fake(function () use (&$failing) {
+            return $failing ? Http::response(['error' => 'private-test-token'], 500) : Http::response(['episodes' => []]);
+        });
+        $this->getJson('/playback/tv/42/season/0')->assertOk()->assertJsonPath('released_count', 0);
+        $this->getJson('/playback/tv/42/season/0')->assertOk();
+        Http::assertSentCount(1);
+        $this->getJson('/playback/tv/42/season/1001')->assertNotFound();
+        $this->getJson('/playback/tv/42/season/-1')->assertNotFound();
+        $failing = true;
+        $this->getJson('/playback/tv/99/season/1')->assertStatus(503)->assertDontSee('private-test-token');
+        config(['services.tmdb.token' => null]);
+        $this->getJson('/playback/tv/42/season/0')->assertStatus(503);
+    }
 }

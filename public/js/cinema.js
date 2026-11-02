@@ -347,7 +347,7 @@ function row(title, items, horizontal = false, explore = null) {
 }
 function discoverPlan() {
     const filters = [...document.querySelectorAll('[data-genre]')].filter(button => button.dataset.genre !== 'All');
-    return ['Movies','Series'].flatMap(type => filters.filter(button => (button.dataset.types || '').includes(type)
+    return ['Movies','Series'].filter(type => page === 'Discover' || page === type).flatMap(type => filters.filter(button => (button.dataset.types || '').includes(type)
         && !(type === 'Series' && ['Sci-Fi','Fantasy','Action','Adventure'].includes(button.dataset.genre)))
         .map(button => ({type,genre:button.dataset.genre})));
 }
@@ -484,7 +484,7 @@ function render() {
     if (typeof refreshReleaseRotation === 'function') refreshReleaseRotation();
     $('#browse').style.paddingTop = page !== 'Discover' || query ? '120px' : '0';
     $('#section-title').textContent = query ? `Results for “${query}”` : page === 'My list' ? 'Your next movie night.' : page === 'Discover' ? 'Find your kind of story.' : `Explore ${page.toLowerCase()}.`;
-    $('#catalog').innerHTML = page === 'Discover' && genre === 'All' && !query && discoverRows ? renderDiscoverRows() : filtered.length
+    $('#catalog').innerHTML = page !== 'My list' && genre === 'All' && !query && discoverRows ? renderDiscoverRows() : filtered.length
         ? (page !== 'My list' && !query
             ? genreRows(filtered)
             : row(page === 'My list' ? 'Saved for later' : 'The collection',filtered))
@@ -522,7 +522,7 @@ async function loadCatalog(append = false, gallery = false) {
     render();
     const params = new URLSearchParams({type: page === 'Movies' ? 'movie' : page === 'Series' ? 'tv' : 'all', genre, q:query, page:String(requestedPage)});
     try {
-        const plan = page === 'Discover' && genre === 'All' && !query && !append ? discoverPlan() : [];
+        const plan = page !== 'My list' && genre === 'All' && !query && !append ? discoverPlan() : [];
         let data;
         if (plan.length) {
             data = await fetchDiscoverRows(plan,requestController.signal);

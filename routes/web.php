@@ -14,6 +14,8 @@ Route::get('/catalog', CatalogController::class)->middleware('throttle:60,1,cata
 Route::get('/releases', [CatalogController::class, 'releases'])->middleware('throttle:60,1,releases:');
 Route::get('/playback/{title}', PlaybackController::class)
     ->where('title', '((movie|tv|tvmaze):[1-9][0-9]{0,9}|wiki:[a-f0-9]{24})')->middleware('throttle:30,1,playback:');
+Route::get('/playback/tv/{series}/season/{season}', [PlaybackController::class, 'episodes'])
+    ->where('series', '[1-9][0-9]{0,9}')->where('season', '0|[1-9][0-9]{0,3}')->middleware('throttle:60,1,episodes:');
 
 Route::controller(ProfileController::class)->group(function () {
     Route::get('/profiles', 'index');

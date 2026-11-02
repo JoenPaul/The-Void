@@ -515,3 +515,89 @@ test('a profile entry failure leaves confirmation open and does not change the s
     assert.equal(app.element('#profile-transition-error').textContent,'Could not load this profile.');
     assert.equal(app.element('#confirm-profile-transition').disabled,false);
 });
+
+test('Movies and Series each load independent full genre rows and reuse Discover feeds', async () => {
+    const calls = [];
+    const app = setup(async url => {
+        const params = new URL(url,'https://void.test').searchParams;
+        calls.push(params.get('type') + ':' + params.get('genre'));
+        const label = params.get('genre');
+        return response(Array.from({length:20},(_,index) => ({...title('movie:' + index,label + ' film ' + index),genres:[label],type:params.get('type') === 'tv' ? 'Series' : 'Movies'})));
+    },new Map(),undefined,false,[genreFilter('Horror','Movies'),genreFilter('Romance','Movies'),genreFilter('Comedy','Movies Series')]);
+    await settle();
+    const count = calls.length;
+    await app.run("page = 'Movies'; loadCatalog()");
+    assert.equal(calls.length,count);
+    assert.equal((app.element('#catalog').innerHTML.match(/20 titles to explore/g) || []).length,3);
+    assert.doesNotMatch(app.element('#catalog').innerHTML,/Comedy series/);
+    await app.run("page = 'Series'; loadCatalog()");
+    assert.match(app.element('#catalog').innerHTML,/Comedy series/);
+    assert.doesNotMatch(app.element('#catalog').innerHTML,/Horror movies|Romance movies/);
+    assert.equal(app.element('#load-more').hidden,true);
+});
+
+function seriesPlayer(fetchSeason) {
+    return setup(async (url,options) => {
+        if (url.startsWith('/playback/tv/')) return fetchSeason(url,options);
+        if (url.startsWith('/playback/')) return {ok:true,json:async () => ({type:'tv',id:'42',seasons:[{number:1,name:'Season 1',episodes:3},{number:2,name:'Season 2',episodes:2}]})};
+        return response([{...title('tv:42','Series to watch'),type:'Series'}]);
+    },new Map([['void.active',JSON.stringify('joen')]]));
+}
+const seasonResponse = (season,episodes) => ({ok:true,json:async () => ({season,episodes})});
+
+test('episode tiles count releases, resume an aired episode, and explain upcoming episodes without playing them', async () => {
+    const app = seriesPlayer(async () => seasonResponse(1,[
+        {number:1,name:'<Pilot>',air_date:'2026-01-01',released:true},
+        {number:2,name:'Soon',air_date:'2099-01-01',released:false},
+        {number:3,name:'Unknown',air_date:null,released:false},
+    ]));
+    await settle();
+    app.storage.set('void.playback.v1',JSON.stringify({'joen:tv:42':{season:1,episode:1,position:45,duration:1000}}));
+    await app.run("openPlayer('tv:42')");
+    assert.equal(app.element('#episode-count').textContent,'1 of 3 episodes released');
+    assert.match(app.element('#episode-tiles').innerHTML,/&lt;Pilot&gt;|Not yet available/);
+    assert.match(app.element('#player-frame').innerHTML,/e=1.*t=45/);
+    const player = app.element('#player-frame').innerHTML;
+    app.run('playSelectedEpisode(2)');
+    assert.match(app.element('#episode-message').textContent,/Episode not yet available.*2099-01-01/);
+    assert.equal(app.element('#player-frame').innerHTML,player);
+    app.run('playSelectedEpisode(3)');
+    assert.match(app.element('#episode-message').textContent,/not been announced/);
+});
+
+test('unreleased seasons never mount a player and failed episode feeds offer retry', async () => {
+    let failed = false;
+    const app = seriesPlayer(async () => failed ? {ok:false} : seasonResponse(1,[{number:1,name:'Upcoming',air_date:'2099-01-01',released:false}]));
+    await settle();
+    await app.run("openPlayer('tv:42')");
+    assert.equal(app.element('#episode-count').textContent,'0 of 1 episodes released');
+    assert.equal(app.element('#player-frame').innerHTML,'');
+    assert.match(app.element('#episode-message').textContent,/not yet available/);
+    failed = true;
+    await app.run('loadSeasonEpisodes()');
+    assert.equal(app.element('#retry-episodes').hidden,false);
+    assert.equal(app.element('#player-frame').innerHTML,'');
+});
+
+test('late season responses cannot overwrite the newly selected season or reopen a closed player', async () => {
+    const pending = [];
+    const app = seriesPlayer((url,options) => new Promise(resolve => pending.push({url,resolve,signal:options.signal})));
+    await settle();
+    const opening = app.run("openPlayer('tv:42')");
+    await settle();
+    app.element('#player-season').value = '2';
+    const second = app.run('loadSeasonEpisodes()');
+    pending[1].resolve(seasonResponse(2,[{number:1,name:'Second season',air_date:'2026-01-01',released:true}]));
+    await second;
+    pending[0].resolve(seasonResponse(1,[{number:1,name:'Stale season',released:true}]));
+    await opening;
+    assert.match(app.element('#episode-tiles').innerHTML,/Second season/);
+    assert.doesNotMatch(app.element('#episode-tiles').innerHTML,/Stale season/);
+    const retry = app.run('loadSeasonEpisodes()');
+    app.run('closePlayer()');
+    assert.equal(pending[2].signal.aborted,true);
+    pending[2].resolve(seasonResponse(2,[{number:1,name:'Late',released:true}]));
+    await retry;
+    assert.equal(app.element('#player-frame').innerHTML,'');
+    assert.equal(app.element('#player').open,false);
+});

@@ -12,6 +12,43 @@ use UnexpectedValueException;
 
 class PlaybackController extends Controller
 {
+    public function episodes(string $series, string $season): JsonResponse
+    {
+        abort_if((int) $season > 1000, 404);
+        $token = trim((string) config('services.tmdb.token'));
+        if ($token === '') {
+            return response()->json(['message' => 'Episode information is temporarily unavailable.'], 503);
+        }
+        try {
+            $data = Cache::remember('playback.episodes.v1.'.hash('sha256', $series.':'.$season.$token), 300,
+                fn (): array => $this->tmdb('tv/'.$series.'/season/'.$season, $token));
+            if (! is_array($data['episodes'] ?? null) || ! array_is_list($data['episodes'])) {
+                throw new UnexpectedValueException('Missing episodes.');
+            }
+            $today = now('UTC')->toDateString();
+            $episodes = [];
+            foreach ($data['episodes'] as $episode) {
+                if (! is_array($episode) || ! is_int($episode['episode_number'] ?? null)
+                    || $episode['episode_number'] < 1 || $episode['episode_number'] > 5000) {
+                    continue;
+                }
+                $date = $episode['air_date'] ?? null;
+                $hasDate = is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)
+                    && checkdate((int) substr($date, 5, 2), (int) substr($date, 8, 2), (int) substr($date, 0, 4));
+                $episodes[$episode['episode_number']] = [
+                    'number' => $episode['episode_number'], 'name' => ($episode['name'] ?? '') ?: 'Episode '.$episode['episode_number'],
+                    'air_date' => $hasDate ? $date : null, 'released' => $hasDate && $date <= $today,
+                ];
+            }
+            ksort($episodes);
+
+            return response()->json(['season' => (int) $season, 'episodes' => array_values($episodes),
+                'released_count' => count(array_filter($episodes, fn (array $episode): bool => $episode['released']))]);
+        } catch (ConnectionException|RequestException|UnexpectedValueException $exception) {
+            return response()->json(['message' => 'Episode information is temporarily unavailable.'], 503);
+        }
+    }
+
     public function __invoke(string $title): JsonResponse
     {
         [$provider, $id] = explode(':', $title, 2);
