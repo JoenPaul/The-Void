@@ -6,7 +6,7 @@ function canRotateReleases() {
 }
 function refreshReleaseRotation() {
     clearTimeout(releaseTimer);
-    if (canRotateReleases()) releaseTimer = setTimeout(() => { if (canRotateReleases()) changeRelease(1); }, 6500);
+    if (canRotateReleases()) releaseTimer = setTimeout(() => { if (canRotateReleases()) changeRelease(1); }, 3000);
 }
 function showRelease(index) {
     if (!releaseMovies.length) return;
