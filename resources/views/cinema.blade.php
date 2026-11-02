@@ -82,13 +82,13 @@
     <dialog id="player" aria-labelledby="player-title">
         <div class="player-heading"><div><p class="eyebrow">THE VOID CINEMA</p><h2 id="player-title"></h2></div><button id="close-player" class="secondary" aria-label="Close player">×</button></div>
         <p id="player-status" role="status"></p>
+        <div id="player-frame"></div>
         <section id="episode-controls" aria-label="Series episodes" hidden>
             <div class="episode-heading"><label>Season<select id="player-season"></select></label><p id="episode-count" role="status"></p></div>
             <p class="episode-note">Release dates are scheduled dates. Playback availability depends on the provider.</p>
             <div id="episode-tiles" class="episode-tiles" aria-busy="false"></div>
             <p id="episode-message" role="status"></p><button id="retry-episodes" class="secondary" hidden>Retry episodes</button>
         </section>
-        <div id="player-frame"></div>
         <p class="playback-note">Playback provided by CineSrc. Availability and ads are controlled by the provider.</p>
         <button id="retry-player" class="secondary" hidden>Try again</button>
     </dialog>
