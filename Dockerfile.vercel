@@ -29,6 +29,7 @@ FROM base AS runtime
 
 ENV APP_ENV=production \
     APP_DEBUG=false \
+    ASSET_URL=/ \
     LOG_CHANNEL=stderr \
     DB_CONNECTION=mysql \
     SESSION_DRIVER=database \
