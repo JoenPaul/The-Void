@@ -528,6 +528,9 @@ function render() {
     $('.hero').hidden = page !== 'Discover' || !!query;
     if (typeof refreshReleaseRotation === 'function') refreshReleaseRotation();
     $('#browse').style.paddingTop = page !== 'Discover' || query ? '120px' : '0';
+    $('.discovery-heading').hidden = page === 'Discover' && !query;
+    $('.filters').hidden = page === 'Discover';
+    $('.catalog-status').hidden = page === 'Discover' && !query && !requestFailed && !unavailableSources.length;
     $('#section-title').textContent = query ? `Results for “${query}”` : page === 'My list' ? 'Your next movie night.' : page === 'Discover' ? 'Find your kind of story.' : `Explore ${page.toLowerCase()}.`;
     const rowPositions = [...$('#catalog').querySelectorAll('.genre-posters')].map(track => track.scrollLeft);
     $('#catalog').innerHTML = page !== 'My list' && genre === 'All' && !query && discoverRows ? renderDiscoverRows() : filtered.length
