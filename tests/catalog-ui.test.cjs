@@ -624,3 +624,57 @@ test('new-release Explore more keeps its collection and pagination in a full gal
     assert.equal(calls.at(-1).get('collection'),'recent');
     assert.equal(calls.at(-1).get('page'),'2');
 });
+
+test('genre rows appear before slower feeds finish and cached tabs restore synchronously', async () => {
+    const pending = [];
+    const app = setup(() => new Promise(resolve => pending.push(resolve)),new Map(),undefined,false,[genreFilter('Horror','Movies'),genreFilter('Romance','Movies')]);
+    assert.match(app.element('#catalog').innerHTML,/Loading titles/);
+    pending[0](response([title('movie:101','Ready immediately')]));
+    await settle();
+    assert.match(app.element('#catalog').innerHTML,/Ready immediately/);
+    assert.match(app.element('#catalog').innerHTML,/Loading titles/);
+    pending.slice(1).forEach(resolve => resolve(response([title('movie:102','Other row')])));
+    await settle();
+    app.run("page = 'My list'; loadCatalog()");
+    const returning = app.run("page = 'Discover'; loadCatalog()");
+    assert.match(app.element('#catalog').innerHTML,/Ready immediately/);
+    assert.doesNotMatch(app.element('#catalog').innerHTML,/Finding your next story/);
+    await returning;
+    assert.equal(pending.length,4);
+});
+
+test('offscreen genres wait for visibility and navigation cancels waiting rows', async () => {
+    const calls = [];
+    const app = setup(async url => { calls.push(url); return response([title('movie:1','Loaded row')]); },new Map(),undefined,false,
+        ['Horror','Romance','Comedy','Drama','Action','Fantasy'].map(label => genreFilter(label,'Movies')));
+    await settle();
+    app.run(`
+        globalThis.IntersectionObserver = class { constructor(callback) {} observe() {} disconnect() {} };
+        discoverCache.clear();
+        page = 'Movies';
+        loadCatalog();
+    `);
+    await settle();
+    assert.equal(calls.length,6);
+    assert.equal(app.run('pendingRowVisibility.size'),4);
+    app.run('pendingRowVisibility.get(2)()');
+    await settle();
+    assert.equal(calls.length,7);
+    await app.run("page = 'My list'; loadCatalog()");
+    await settle();
+    assert.equal(app.run('pendingRowVisibility.size'),0);
+    assert.equal(calls.length,7);
+});
+
+test('expired genre rows remain visible while refreshing', async () => {
+    let fail = false;
+    const app = setup(async () => fail ? {ok:false} : response([title('movie:1','Cached story')]),new Map(),undefined,false,[genreFilter('Horror','Movies')]);
+    await settle();
+    app.run('discoverCache.forEach(entry => entry.expires = 0)');
+    fail = true;
+    const refreshing = app.run('loadCatalog()');
+    assert.match(app.element('#catalog').innerHTML,/Cached story/);
+    await refreshing;
+    assert.match(app.element('#catalog').innerHTML,/Cached story/);
+    assert.equal(app.element('#catalog-retry').hidden,false);
+});

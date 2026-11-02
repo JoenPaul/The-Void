@@ -55,6 +55,37 @@ let catalog = [], catalogMode = 'pending', catalogPage = 0, hasMore = false, loa
 let catalogGallery = false;
 let discoverRows = null;
 const discoverCache = new Map();
+const pendingRowVisibility = new Map();
+let catalogObserver;
+function observeCatalogRows() {
+    catalogObserver?.disconnect();
+    if (typeof IntersectionObserver === 'undefined') return;
+    catalogObserver = new IntersectionObserver(entries => {
+        entries.filter(entry => entry.isIntersecting).forEach(entry => pendingRowVisibility.get(Number(entry.target.dataset.pendingRow))?.());
+    }, {rootMargin:'600px'});
+    $('#catalog').querySelectorAll('[data-pending-row]').forEach(element => catalogObserver.observe(element));
+}
+function waitForCatalogRow(index, signal) {
+    if (index < 2 || typeof IntersectionObserver === 'undefined') return Promise.resolve();
+    return new Promise(resolve => {
+        const finish = () => {
+            pendingRowVisibility.delete(index);
+            signal.removeEventListener('abort',finish);
+            resolve();
+        };
+        pendingRowVisibility.set(index,finish);
+        signal.addEventListener('abort',finish,{once:true});
+        observeCatalogRows();
+    });
+}
+function cachedDiscoverRow(descriptor) {
+    const key = descriptor.type + ':' + descriptor.genre + (descriptor.collection === 'recent' ? ':recent' : '');
+    let cached = discoverCache.get(key);
+    if (!cached && typeof sessionStorage !== 'undefined') {
+        try { cached = JSON.parse(sessionStorage.getItem('void.genre.' + key)); } catch {}
+    }
+    return cached && Array.isArray(cached.data?.results) ? cached : null;
+}
 let requestVersion = 0, requestController, searchTimer, requestFailed = false, unavailableSources = [];
 const legacyProfiles = profiles.map(profile => ({...profile}));
 const legacyLists = {...savedLists};
@@ -360,8 +391,9 @@ function discoverPlan() {
         && !(type === 'Series' && ['Sci-Fi','Fantasy','Action','Adventure'].includes(button.dataset.genre)))
         .map(button => ({type,genre:button.dataset.genre})));
 }
-async function fetchDiscoverRows(plan, signal) {
-    const rows = new Array(plan.length);
+async function fetchDiscoverRows(plan, signal, onProgress = () => {}) {
+    const rows = plan.map(descriptor => ({...descriptor,items:cachedDiscoverRow(descriptor)?.data.results || [],pending:true,failed:false}));
+    onProgress(rows);
     let next = 0;
     async function worker() {
         while (next < plan.length && !signal.aborted) {
@@ -369,14 +401,13 @@ async function fetchDiscoverRows(plan, signal) {
             const descriptor = plan[index];
             const key = descriptor.type + ':' + descriptor.genre + (descriptor.collection === 'recent' ? ':recent' : '');
             try {
-                let cached = discoverCache.get(key);
-                if (!cached && typeof sessionStorage !== 'undefined') {
-                    try { cached = JSON.parse(sessionStorage.getItem('void.genre.' + key)); } catch {}
-                }
+                let cached = cachedDiscoverRow(descriptor);
                 let data;
                 if (cached?.expires > Date.now() && Array.isArray(cached.data?.results)) {
                     data = cached.data;
                 } else {
+                    if (index >= 2 && typeof IntersectionObserver !== 'undefined') await waitForCatalogRow(index,signal);
+                    if (signal.aborted) return;
                     const params = new URLSearchParams({type:descriptor.type === 'Movies' ? 'movie' : 'tv',genre:descriptor.genre,page:'1'});
                     if (descriptor.collection) params.set('collection',descriptor.collection);
                     const response = await fetch('/catalog?' + params, {headers:{Accept:'application/json'},signal});
@@ -392,14 +423,15 @@ async function fetchDiscoverRows(plan, signal) {
                 rows[index] = {...descriptor,items:data.results,failed:false};
             } catch (error) {
                 if (signal.aborted) throw error;
-                rows[index] = {...descriptor,items:[],failed:true};
+                rows[index] = {...descriptor,items:rows[index].items,failed:true};
             }
+            if (!signal.aborted) onProgress(rows);
         }
     }
     await Promise.all(Array.from({length:Math.min(4,plan.length)},worker));
     if (signal.aborted) throw new Error('Discovery cancelled');
     const unavailable = rows.filter(item => item.failed).map(item => item.type + ':' + item.genre);
-    return {source:unavailable.length === rows.length ? 'unavailable' : 'tmdb',
+    return {source:unavailable.length === rows.length && !rows.some(item => item.items.length) ? 'unavailable' : 'tmdb',
         results:[...new Map(rows.flatMap(item => item.items).map(movie => [movie.id,movie])).values()],
         rows,page:1,has_more:false,unavailable};
 }
@@ -416,9 +448,10 @@ async function openGenreGallery(type, label, collection = 'popular') {
     }
 }
 function renderDiscoverRows() {
-    return discoverRows.map(item => {
+    return discoverRows.map((item, index) => {
         const title = item.title || item.genre + (item.type === 'Movies' ? ' movies' : ' series');
-        if (item.items.length) return row(title,page === 'Discover' ? item.items.slice(0,8) : item.items,true,item);
+        if (item.items.length) return `<div${item.pending ? ` data-pending-row="${index}"` : ''}>` + row(title,page === 'Discover' ? item.items.slice(0,8) : item.items,true,item) + '</div>';
+        if (item.pending) return `<section class="genre-section" data-pending-row="${index}"><div class="row-heading"><h3>${escapeHtml(title)}</h3></div><div class="poster-grid genre-posters" role="status" aria-label="Loading titles">${'<div class="poster" aria-hidden="true"></div>'.repeat(6)}</div></section>`;
         if (!item.failed) return '';
         return `<section class="genre-section"><div class="row-heading"><h3><span>▍</span>${escapeHtml(title)}</h3><button class="genre-explore" data-explore-type="${escapeHtml(item.type)}" data-explore-genre="${escapeHtml(item.genre)}" data-explore-collection="${escapeHtml(item.collection || 'popular')}">Try this genre →</button></div><p class="history-empty">This genre is temporarily unavailable.</p></section>`;
     }).join('');
@@ -496,14 +529,17 @@ function render() {
     if (typeof refreshReleaseRotation === 'function') refreshReleaseRotation();
     $('#browse').style.paddingTop = page !== 'Discover' || query ? '120px' : '0';
     $('#section-title').textContent = query ? `Results for “${query}”` : page === 'My list' ? 'Your next movie night.' : page === 'Discover' ? 'Find your kind of story.' : `Explore ${page.toLowerCase()}.`;
+    const rowPositions = [...$('#catalog').querySelectorAll('.genre-posters')].map(track => track.scrollLeft);
     $('#catalog').innerHTML = page !== 'My list' && genre === 'All' && !query && discoverRows ? renderDiscoverRows() : filtered.length
         ? (page !== 'My list' && !query
             ? catalogCollection === 'recent' ? row(page === 'Movies' ? 'New movie releases' : 'New series releases',filtered) : genreRows(filtered)
             : row(page === 'My list' ? 'Saved for later' : 'The collection',filtered))
         : `<div class="empty">${loading ? 'Finding your next story…' : page === 'My list' ? 'No saved titles match. Explore the collection or clear your filters.' : hasMore ? 'No matches on this page. Explore more titles below or try another filter.' : requestFailed || unavailableSources.length ? 'Search is incomplete because the catalog could not be reached. Please try again.' : 'No titles match. Try another search or genre.'}</div>`;
-    $('#catalog').setAttribute('aria-busy', String(loading));
+    observeCatalogRows();
+    $('#catalog').setAttribute('aria-busy', String(loading && !catalog.length));
     $('#catalog').querySelectorAll('[data-movie]').forEach(button => button.addEventListener('click', () => showDetails(button.dataset.movie)));
     $('#catalog').querySelectorAll('[data-explore-genre]').forEach(button => button.addEventListener('click', () => openGenreGallery(button.dataset.exploreType,button.dataset.exploreGenre,button.dataset.exploreCollection)));
+    $('#catalog').querySelectorAll('.genre-posters').forEach((track,index) => { track.scrollLeft = rowPositions[index] || 0; });
     initializeRowArrows();
     handleImageErrors($('#catalog'));
     $('#load-more').hidden = page === 'My list' || !hasMore;
@@ -511,7 +547,7 @@ function render() {
     $('#load-more').textContent = loading ? 'Loading…' : 'Explore more titles ↓';
     $('#catalog-retry').hidden = (!requestFailed && !unavailableSources.length) || page === 'My list';
     $('#catalog-status').textContent = page === 'My list' ? 'Saved to your profile. Ready for your next movie night.'
-        : loading ? 'Finding more stories…'
+        : loading ? (catalog.length ? 'Your collection is ready. More genres load as you browse.' : 'Finding more stories…')
         : requestFailed ? (catalogMode === 'tmdb' ? 'Couldn’t load more titles. Your current collection is still here.' : 'TMDB is temporarily unavailable. Please try again.')
         : catalogMode === 'tmdb' ? (unavailableSources.length ? 'Part of the catalog is unavailable. Your available titles are shown below.' : 'Movies and series from TMDB · Explore the collection')
         : 'Movies and series from TMDB';
@@ -523,6 +559,7 @@ async function loadCatalog(append = false, gallery = false) {
     updateGenreFilters();
     const version = ++requestVersion;
     requestController?.abort();
+    catalogObserver?.disconnect();
     clearTimeout(searchTimer);
     loading = false;
     if (page === 'My list') { render(); return; }
@@ -531,14 +568,22 @@ async function loadCatalog(append = false, gallery = false) {
     loading = true;
     requestFailed = false;
     if (!append && catalogMode === 'tmdb') { catalog = []; hasMore = false; }
-    render();
     const params = new URLSearchParams({type: page === 'Movies' ? 'movie' : page === 'Series' ? 'tv' : 'all', genre, q:query, page:String(requestedPage),collection:catalogCollection});
     try {
         const plan = page !== 'My list' && genre === 'All' && !query && !append && !gallery && catalogCollection === 'popular' ? discoverPlan() : [];
         let data;
         if (plan.length) {
-            data = await fetchDiscoverRows(plan,requestController.signal);
+            data = await fetchDiscoverRows(plan,requestController.signal, rows => {
+                if (version !== requestVersion) return;
+                discoverRows = rows.slice();
+                catalog = [...new Map(rows.flatMap(item => item.items).map(movie => [movie.id,movie])).values()];
+                catalog.forEach(movie => titleIndex.set(movie.id,movie));
+                catalogMode = 'tmdb';
+                unavailableSources = rows.filter(item => item.failed).map(item => item.type + ':' + item.genre);
+                render();
+            });
         } else {
+            render();
             const response = await fetch('/catalog?' + params, {headers:{Accept:'application/json'},signal:requestController.signal});
             if (!response.ok) throw new Error('Catalog unavailable');
             data = await response.json();
@@ -616,6 +661,7 @@ $('#details').addEventListener('click', event => {
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) $('#details').close();
 });
 document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => {
+    if (page === button.dataset.page && genre === 'All' && !query && !catalogGallery) return;
     page = button.dataset.page;
     catalogCollection = 'popular';
     if (page === 'Discover') {
