@@ -50,6 +50,7 @@ if (Array.isArray(storedTitles)) {
 }
 const saved = () => Array.isArray(savedLists[activeProfile?.id]) ? savedLists[activeProfile.id] : [];
 let page = 'Discover', genre = 'All', query = '', currentMovie = null;
+let catalogCollection = 'popular';
 let catalog = [], catalogMode = 'pending', catalogPage = 0, hasMore = false, loading = false;
 let catalogGallery = false;
 let discoverRows = null;
@@ -342,11 +343,19 @@ function row(title, items, horizontal = false, explore = null) {
     if (!items.length) return '';
     const posters = `<div class="poster-grid${horizontal ? ' genre-posters' : ''}">${items.map(card).join('')}</div>`;
     const carousel = horizontal ? `<div class="genre-carousel">${posters}<button class="row-arrow row-arrow-left" data-row-direction="-1" aria-label="Previous ${escapeHtml(title)}" disabled>‹</button><button class="row-arrow row-arrow-right" data-row-direction="1" aria-label="Next ${escapeHtml(title)}" disabled>›</button></div>` : posters;
-    const more = explore ? `<button class="genre-explore" data-explore-type="${escapeHtml(explore.type)}" data-explore-genre="${escapeHtml(explore.genre)}">Explore more →<span class="sr-only"> ${escapeHtml(title)}</span></button>` : '';
+    const more = explore ? `<button class="genre-explore" data-explore-type="${escapeHtml(explore.type)}" data-explore-genre="${escapeHtml(explore.genre)}" data-explore-collection="${escapeHtml(explore.collection || 'popular')}">Explore more →<span class="sr-only"> ${escapeHtml(title)}</span></button>` : '';
     return `<section class="${horizontal ? 'genre-section' : ''}"><div class="row-heading"><h3><span>▍</span>${escapeHtml(title)}</h3><div class="row-summary"><small>${items.length} ${items.length === 1 ? 'title' : 'titles'} to explore</small>${more}</div></div>${carousel}</section>`;
 }
 function discoverPlan() {
     const filters = [...document.querySelectorAll('[data-genre]')].filter(button => button.dataset.genre !== 'All');
+    if (page === 'Discover' && filters.length) {
+        return [
+            {type:'Movies',genre:'All',collection:'recent',title:'New movie releases'},
+            {type:'Series',genre:'All',collection:'recent',title:'New series releases'},
+            ...['Horror','Romance'].filter(label => filters.some(button => button.dataset.genre === label))
+                .map(label => ({type:'Movies',genre:label})),
+        ];
+    }
     return ['Movies','Series'].filter(type => page === 'Discover' || page === type).flatMap(type => filters.filter(button => (button.dataset.types || '').includes(type)
         && !(type === 'Series' && ['Sci-Fi','Fantasy','Action','Adventure'].includes(button.dataset.genre)))
         .map(button => ({type,genre:button.dataset.genre})));
@@ -358,7 +367,7 @@ async function fetchDiscoverRows(plan, signal) {
         while (next < plan.length && !signal.aborted) {
             const index = next++;
             const descriptor = plan[index];
-            const key = descriptor.type + ':' + descriptor.genre;
+            const key = descriptor.type + ':' + descriptor.genre + (descriptor.collection === 'recent' ? ':recent' : '');
             try {
                 let cached = discoverCache.get(key);
                 if (!cached && typeof sessionStorage !== 'undefined') {
@@ -369,6 +378,7 @@ async function fetchDiscoverRows(plan, signal) {
                     data = cached.data;
                 } else {
                     const params = new URLSearchParams({type:descriptor.type === 'Movies' ? 'movie' : 'tv',genre:descriptor.genre,page:'1'});
+                    if (descriptor.collection) params.set('collection',descriptor.collection);
                     const response = await fetch('/catalog?' + params, {headers:{Accept:'application/json'},signal});
                     if (!response.ok) throw new Error('Genre unavailable');
                     data = await response.json();
@@ -393,9 +403,10 @@ async function fetchDiscoverRows(plan, signal) {
         results:[...new Map(rows.flatMap(item => item.items).map(movie => [movie.id,movie])).values()],
         rows,page:1,has_more:false,unavailable};
 }
-async function openGenreGallery(type, label) {
+async function openGenreGallery(type, label, collection = 'popular') {
     page = type;
     genre = label;
+    catalogCollection = collection;
     query = '';
     $('#search').value = '';
     document.querySelectorAll('[data-page]').forEach(button => button.classList.toggle('active',button.dataset.page === page));
@@ -406,10 +417,10 @@ async function openGenreGallery(type, label) {
 }
 function renderDiscoverRows() {
     return discoverRows.map(item => {
-        const title = item.genre + (item.type === 'Movies' ? ' movies' : ' series');
-        if (item.items.length) return row(title,item.items,true,item);
+        const title = item.title || item.genre + (item.type === 'Movies' ? ' movies' : ' series');
+        if (item.items.length) return row(title,page === 'Discover' ? item.items.slice(0,8) : item.items,true,item);
         if (!item.failed) return '';
-        return `<section class="genre-section"><div class="row-heading"><h3><span>▍</span>${escapeHtml(title)}</h3><button class="genre-explore" data-explore-type="${escapeHtml(item.type)}" data-explore-genre="${escapeHtml(item.genre)}">Try this genre →</button></div><p class="history-empty">This genre is temporarily unavailable.</p></section>`;
+        return `<section class="genre-section"><div class="row-heading"><h3><span>▍</span>${escapeHtml(title)}</h3><button class="genre-explore" data-explore-type="${escapeHtml(item.type)}" data-explore-genre="${escapeHtml(item.genre)}" data-explore-collection="${escapeHtml(item.collection || 'popular')}">Try this genre →</button></div><p class="history-empty">This genre is temporarily unavailable.</p></section>`;
     }).join('');
 }
 function updateRowArrows(carousel) {
@@ -455,7 +466,8 @@ function genreRows(items) {
 function updateGenreFilters() {
     let reset = false;
     document.querySelectorAll('[data-genre]').forEach(button => {
-        button.hidden = (page === 'Movies' || page === 'Series') && !(button.dataset.types || '').includes(page);
+        button.hidden = page === 'Discover' ? !['All','Horror','Romance'].includes(button.dataset.genre)
+            : (page === 'Movies' || page === 'Series') && !(button.dataset.types || '').includes(page);
         if (button.hidden && button.dataset.genre === genre) reset = true;
     });
     if (reset) genre = 'All';
@@ -486,12 +498,12 @@ function render() {
     $('#section-title').textContent = query ? `Results for “${query}”` : page === 'My list' ? 'Your next movie night.' : page === 'Discover' ? 'Find your kind of story.' : `Explore ${page.toLowerCase()}.`;
     $('#catalog').innerHTML = page !== 'My list' && genre === 'All' && !query && discoverRows ? renderDiscoverRows() : filtered.length
         ? (page !== 'My list' && !query
-            ? genreRows(filtered)
+            ? catalogCollection === 'recent' ? row(page === 'Movies' ? 'New movie releases' : 'New series releases',filtered) : genreRows(filtered)
             : row(page === 'My list' ? 'Saved for later' : 'The collection',filtered))
         : `<div class="empty">${loading ? 'Finding your next story…' : page === 'My list' ? 'No saved titles match. Explore the collection or clear your filters.' : hasMore ? 'No matches on this page. Explore more titles below or try another filter.' : requestFailed || unavailableSources.length ? 'Search is incomplete because the catalog could not be reached. Please try again.' : 'No titles match. Try another search or genre.'}</div>`;
     $('#catalog').setAttribute('aria-busy', String(loading));
     $('#catalog').querySelectorAll('[data-movie]').forEach(button => button.addEventListener('click', () => showDetails(button.dataset.movie)));
-    $('#catalog').querySelectorAll('[data-explore-genre]').forEach(button => button.addEventListener('click', () => openGenreGallery(button.dataset.exploreType,button.dataset.exploreGenre)));
+    $('#catalog').querySelectorAll('[data-explore-genre]').forEach(button => button.addEventListener('click', () => openGenreGallery(button.dataset.exploreType,button.dataset.exploreGenre,button.dataset.exploreCollection)));
     initializeRowArrows();
     handleImageErrors($('#catalog'));
     $('#load-more').hidden = page === 'My list' || !hasMore;
@@ -520,9 +532,9 @@ async function loadCatalog(append = false, gallery = false) {
     requestFailed = false;
     if (!append && catalogMode === 'tmdb') { catalog = []; hasMore = false; }
     render();
-    const params = new URLSearchParams({type: page === 'Movies' ? 'movie' : page === 'Series' ? 'tv' : 'all', genre, q:query, page:String(requestedPage)});
+    const params = new URLSearchParams({type: page === 'Movies' ? 'movie' : page === 'Series' ? 'tv' : 'all', genre, q:query, page:String(requestedPage),collection:catalogCollection});
     try {
-        const plan = page !== 'My list' && genre === 'All' && !query && !append ? discoverPlan() : [];
+        const plan = page !== 'My list' && genre === 'All' && !query && !append && !gallery && catalogCollection === 'popular' ? discoverPlan() : [];
         let data;
         if (plan.length) {
             data = await fetchDiscoverRows(plan,requestController.signal);
@@ -605,6 +617,7 @@ $('#details').addEventListener('click', event => {
 });
 document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => {
     page = button.dataset.page;
+    catalogCollection = 'popular';
     if (page === 'Discover') {
         genre = 'All';
         query = '';
@@ -615,6 +628,7 @@ document.querySelectorAll('[data-page]').forEach(button => button.addEventListen
 }));
 document.querySelectorAll('[data-genre]').forEach(button => button.addEventListener('click', () => {
     genre = button.dataset.genre;
+    catalogCollection = 'popular';
     document.querySelectorAll('[data-genre]').forEach(item => {
         item.classList.toggle('active',item === button);
         item.setAttribute('aria-pressed',String(item === button));
@@ -623,6 +637,7 @@ document.querySelectorAll('[data-genre]').forEach(button => button.addEventListe
 }));
 $('#search').addEventListener('input', event => {
     query = event.target.value.trim();
+    catalogCollection = 'popular';
     clearTimeout(searchTimer);
     requestVersion++;
     requestController?.abort();

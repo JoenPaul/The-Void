@@ -43,6 +43,7 @@ class CatalogController extends Controller
             'genre' => ['sometimes', Rule::in(self::genreLabels())],
             'q' => ['nullable', 'string', 'max:100'],
             'page' => ['sometimes', 'integer', 'min:1', 'max:500'],
+            'collection' => ['sometimes', Rule::in(['popular', 'recent'])],
         ]);
         $token = trim((string) config('services.tmdb.token'));
         if ($token === '') {
@@ -59,7 +60,7 @@ class CatalogController extends Controller
 
         foreach ($types as $mediaType) {
             try {
-                $catalog = $this->titles($token, $mediaType, $query, $genre, $page);
+                $catalog = $this->titles($token, $mediaType, $query, $genre, $page, false, $data['collection'] ?? 'popular');
                 $results = [...$results, ...$catalog['results']];
                 $hasMore = $hasMore || $catalog['has_more'];
             } catch (ConnectionException|RequestException|UnexpectedValueException $exception) {
@@ -95,7 +96,7 @@ class CatalogController extends Controller
     }
 
     /** @return array{results: list<array<string, mixed>>, has_more: bool} */
-    private function titles(string $token, string $type, string $query, string $genre, int $page, bool $latest = false): array
+    private function titles(string $token, string $type, string $query, string $genre, int $page, bool $latest = false, string $collection = 'popular'): array
     {
         $genreId = self::GENRES[$type][$genre] ?? null;
         if ($type === 'tv' && $genreId === null) {
@@ -108,9 +109,9 @@ class CatalogController extends Controller
         if ($genre !== 'All' && $genreId === null) {
             return ['results' => [], 'has_more' => false];
         }
-        $key = 'tmdb.catalog.v5.'.hash('sha256', json_encode([$token, $type, $query, $genre, $page, $latest]));
+        $key = 'tmdb.catalog.v6.'.hash('sha256', json_encode([$token, $type, $query, $genre, $page, $latest, $collection, $collection === 'recent' ? now('UTC')->toDateString() : null]));
 
-        return Cache::remember($key, 300, function () use ($token, $type, $query, $genreId, $page, $latest): array {
+        return Cache::remember($key, 300, function () use ($token, $type, $query, $genreId, $page, $latest, $collection): array {
             $parameters = ['language' => 'en-US', 'include_adult' => 'false', 'page' => $page];
             if ($query !== '') {
                 $parameters['query'] = $query;
@@ -118,6 +119,12 @@ class CatalogController extends Controller
                 $parameters['sort_by'] = 'popularity.desc';
                 if ($genreId !== null) {
                     $parameters['with_genres'] = $genreId;
+                }
+                if ($collection === 'recent') {
+                    $dateField = $type === 'movie' ? 'primary_release_date' : 'first_air_date';
+                    $parameters[$dateField.'.gte'] = now('UTC')->subDays(90)->toDateString();
+                    $parameters[$dateField.'.lte'] = now('UTC')->toDateString();
+                    $parameters['sort_by'] = $dateField.'.desc';
                 }
             }
             $endpoint = ($query === '' ? 'discover/' : 'search/').$type;
@@ -145,6 +152,10 @@ class CatalogController extends Controller
                 $poster = $item['poster_path'] ?? null;
                 $backdrop = $item['backdrop_path'] ?? null;
                 $date = $item[$type === 'movie' ? 'release_date' : 'first_air_date'] ?? '';
+                if ($collection === 'recent' && (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)
+                    || $date > now('UTC')->toDateString() || $date < now('UTC')->subDays(90)->toDateString())) {
+                    continue;
+                }
                 $results[] = [
                     'id' => $type.':'.$item['id'], 'title' => $item[$type === 'movie' ? 'title' : 'name'] ?? 'Untitled',
                     'year' => substr($date ?: 'TBA', 0, 4), 'type' => $type === 'movie' ? 'Movies' : 'Series',

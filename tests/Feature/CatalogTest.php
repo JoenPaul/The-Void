@@ -145,6 +145,25 @@ class CatalogTest extends TestCase
         $this->getJson('/releases')->assertOk()->assertJsonPath('results', []);
     }
 
+    public function test_recent_collections_use_release_windows_for_movies_and_series_and_keep_pagination(): void
+    {
+        $this->travelTo(now('UTC')->setDate(2026, 11, 2)->startOfDay());
+        Http::fake(['*' => Http::response(['results' => [
+            [...$this->movie(), 'release_date' => '2026-11-01', 'first_air_date' => '2026-11-01', 'name' => 'New series'],
+            [...$this->movie(), 'id' => 43, 'release_date' => '2026-11-03', 'first_air_date' => '2026-11-03'],
+            [...$this->movie(), 'id' => 44, 'release_date' => '2020-01-01', 'first_air_date' => '2020-01-01'],
+        ], 'total_pages' => 3])]);
+        $this->getJson('/catalog?type=movie&collection=recent&page=2')->assertOk()->assertJsonCount(1, 'results')
+            ->assertJsonPath('page', 2)->assertJsonPath('has_more', true);
+        $this->getJson('/catalog?type=tv&collection=recent')->assertOk()->assertJsonCount(1, 'results');
+        Http::assertSent(fn ($request): bool => str_contains($request->url(), '/discover/movie')
+            && $request['primary_release_date.lte'] === '2026-11-02' && $request['sort_by'] === 'primary_release_date.desc');
+        Http::assertSent(fn ($request): bool => str_contains($request->url(), '/discover/tv')
+            && $request['first_air_date.lte'] === '2026-11-02' && $request['sort_by'] === 'first_air_date.desc');
+        $this->getJson('/catalog?collection=invalid')->assertUnprocessable();
+        $this->travelBack();
+    }
+
     /** @return array<string, mixed> */
     private function movie(): array
     {

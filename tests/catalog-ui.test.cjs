@@ -371,7 +371,7 @@ test('genre row arrows move a page and disable at either end', async () => {
 
 const genreFilter = (genre, types) => ({dataset:{genre,types},classList:{toggle() {}},setAttribute() {},addEventListener() {}});
 
-test('Discover requests each actual movie and TV genre separately and opens a paginated genre gallery', async () => {
+test('Discover shows four short curated rows and opens a paginated genre gallery', async () => {
     const calls = [];
     const filters = [genreFilter('All','Movies Series'),genreFilter('Horror','Movies'),genreFilter('Romance','Movies'),genreFilter('Sci-Fi','Movies Series'),genreFilter('Sci-Fi & Fantasy','Series')];
     const app = setup(async url => {
@@ -385,8 +385,12 @@ test('Discover requests each actual movie and TV genre separately and opens a pa
     assert.equal(calls.length,4);
     assert.equal(calls.filter(params => params.get('type') === 'tv').length,1);
     assert.match(app.element('#catalog').innerHTML,/Romance movies/);
-    assert.match(app.element('#catalog').innerHTML,/Sci-Fi &amp; Fantasy series/);
-    assert.equal((app.element('#catalog').innerHTML.match(/20 titles to explore/g) || []).length,4);
+    assert.match(app.element('#catalog').innerHTML,/New movie releases/);
+    assert.match(app.element('#catalog').innerHTML,/New series releases/);
+    assert.doesNotMatch(app.element('#catalog').innerHTML,/Sci-Fi movies|Sci-Fi &amp; Fantasy series/);
+    assert.equal((app.element('#catalog').innerHTML.match(/8 titles to explore/g) || []).length,4);
+    assert.equal(calls.filter(params => params.get('collection') === 'recent').length,2);
+    assert.equal(filters.find(button => button.dataset.genre === 'Sci-Fi').hidden,true);
     assert.equal(app.element('#load-more').hidden,true);
     assert.match(app.element('#catalog').innerHTML,/data-explore-genre="Romance"/);
     await app.run("openGenreGallery('Movies','Romance')");
@@ -416,14 +420,14 @@ test('Discover preserves successful rows when another genre fails and retries on
     assert.equal(app.element('#catalog-retry').hidden,false);
     failing = false;
     await app.run('loadCatalog()');
-    assert.deepEqual(calls,['Horror','Romance','Romance']);
+    assert.deepEqual(calls,['All','All','Horror','Romance','Romance']);
     assert.match(app.element('#catalog').innerHTML,/Romance film/);
     assert.doesNotMatch(app.element('#catalog').innerHTML,/temporarily unavailable/);
 });
 
 test('leaving Discover cancels its pending feeds without replacing a newer search', async () => {
     const pending = [];
-    const filters = Array.from({length:6},(_,index) => genreFilter('Genre' + index,'Movies'));
+    const filters = [genreFilter('Horror','Movies'),genreFilter('Romance','Movies'),genreFilter('Comedy','Movies')];
     const app = setup((url, options) => {
         const params = new URL(url,'https://void.test').searchParams;
         if (params.get('q')) return Promise.resolve(response([title('movie:99','Search winner')]));
@@ -527,7 +531,7 @@ test('Movies and Series each load independent full genre rows and reuse Discover
     await settle();
     const count = calls.length;
     await app.run("page = 'Movies'; loadCatalog()");
-    assert.equal(calls.length,count);
+    assert.equal(calls.length,count + 1);
     assert.equal((app.element('#catalog').innerHTML.match(/20 titles to explore/g) || []).length,3);
     assert.doesNotMatch(app.element('#catalog').innerHTML,/Comedy series/);
     await app.run("page = 'Series'; loadCatalog()");
@@ -600,4 +604,23 @@ test('late season responses cannot overwrite the newly selected season or reopen
     await retry;
     assert.equal(app.element('#player-frame').innerHTML,'');
     assert.equal(app.element('#player').open,false);
+});
+
+test('new-release Explore more keeps its collection and pagination in a full gallery', async () => {
+    const calls = [];
+    const app = setup(async url => {
+        const params = new URL(url,'https://void.test').searchParams;
+        calls.push(params);
+        return response(Array.from({length:20},(_,index) => title('movie:' + index,'Release ' + index)));
+    },new Map(),undefined,false,[genreFilter('Horror','Movies'),genreFilter('Romance','Movies')]);
+    await settle();
+    await app.run("openGenreGallery('Series','All','recent')");
+    assert.equal(calls.at(-1).get('collection'),'recent');
+    assert.equal(calls.at(-1).get('type'),'tv');
+    assert.match(app.element('#catalog').innerHTML,/New series releases/);
+    assert.doesNotMatch(app.element('#catalog').innerHTML,/genre-carousel/);
+    assert.equal((app.element('#catalog').innerHTML.match(/data-movie=/g) || []).length,20);
+    await app.run('loadCatalog(true)');
+    assert.equal(calls.at(-1).get('collection'),'recent');
+    assert.equal(calls.at(-1).get('page'),'2');
 });
