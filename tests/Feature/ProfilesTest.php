@@ -38,7 +38,7 @@ class ProfilesTest extends TestCase
         $this->deleteJson('/profiles/alex')->assertOk();
     }
 
-    public function test_the_last_profile_cannot_be_archived_and_archived_profiles_do_not_count_toward_the_limit(): void
+    public function test_the_last_profile_cannot_be_archived_and_new_profiles_can_be_added_after_archiving(): void
     {
         $this->putJson('/profiles/one', ['name' => 'One', 'avatar' => 'moon'])->assertCreated();
         $this->deleteJson('/profiles/one')->assertUnprocessable()->assertJsonValidationErrors('profile');
@@ -60,13 +60,14 @@ class ProfilesTest extends TestCase
         $this->assertDatabaseCount('viewer_profiles', 1);
     }
 
-    public function test_six_profile_limit_still_allows_editing(): void
+    public function test_more_than_six_profiles_can_be_created_and_edited(): void
     {
-        foreach (range(1, 6) as $number) {
+        foreach (range(1, 12) as $number) {
             $this->putJson('/profiles/profile-'.$number, ['name' => 'Profile '.$number, 'avatar' => 'violet'])->assertCreated();
         }
-        $this->putJson('/profiles/seven', ['name' => 'Seventh', 'avatar' => 'violet'])->assertUnprocessable();
         $this->putJson('/profiles/profile-1', ['name' => 'Renamed', 'avatar' => 'orbit'])->assertOk();
+        $this->getJson('/profiles')->assertOk()->assertJsonCount(12, 'profiles');
+        $this->assertDatabaseHas('viewer_profiles', ['id' => 'profile-1', 'name' => 'Renamed', 'avatar' => 'orbit']);
     }
 
     public function test_watchlists_persist_across_sessions_and_are_separate_for_each_profile(): void

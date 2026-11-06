@@ -32,9 +32,6 @@ class ProfileController extends Controller
             if ($profiles->contains(fn (object $item): bool => $item->id !== $profile && $item->name_key === $nameKey)) {
                 throw ValidationException::withMessages(['name' => 'That name is already in use.']);
             }
-            if (! $existing && $profiles->whereNull('deleted_at')->count() >= 6) {
-                throw ValidationException::withMessages(['name' => 'You can have up to 6 profiles. Edit an existing profile instead.']);
-            }
 
             DB::table('viewer_profiles')->updateOrInsert(['id' => $profile], [
                 ...$data, 'name_key' => $nameKey,
