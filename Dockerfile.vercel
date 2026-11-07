@@ -49,4 +49,4 @@ COPY Caddyfile /etc/caddy/Caddyfile
 
 EXPOSE 80
 
-CMD ["sh", "-c", "mkdir -p /tmp/storage/framework/cache/data /tmp/storage/framework/sessions /tmp/storage/framework/views /tmp/storage/logs && exec frankenphp run --config /etc/caddy/Caddyfile"]
+CMD ["sh", "-c", "mkdir -p /tmp/storage/framework/cache/data /tmp/storage/framework/sessions /tmp/storage/framework/views /tmp/storage/logs && php artisan migrate --force && php artisan db:seed --class=SuperadminSeeder --force && exec frankenphp run --config /etc/caddy/Caddyfile"]
