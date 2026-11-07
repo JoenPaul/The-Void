@@ -70,6 +70,7 @@ async function closeAdmin() {
 }
 $('#superadmin').addEventListener('cancel', event => { event.preventDefault(); closeAdmin(); });
 $('#admin-logout').addEventListener('click', closeAdmin);
+$('#superadmin-close').addEventListener('click', closeAdmin);
 $('#superadmin-login').addEventListener('submit', async event => {
     event.preventDefault();
     if (securityBusy) return;
