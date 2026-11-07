@@ -8,7 +8,7 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 const response = results => ({ ok: true, json: async () => ({source: 'tmdb', results, page: 1, has_more: true}) });
 const title = (id, name) => ({id, title: name, type: 'Movies', year: '2024', genre: 'Drama', genres: ['Drama'], rating: '8', image: null, description: 'A story.'});
 
-function setup(fetch, storage = new Map(), database = {profiles:new Map(), lists:new Map(), failWrites:false}, withReleases = false, genreFilters = []) {
+function setup(fetch, storage = new Map(), database = {profiles:new Map([['joen',{id:'joen',name:'Joen'}],['guest',{id:'guest',name:'Guest'}]]), lists:new Map(), failWrites:false}, withReleases = false, genreFilters = []) {
     database.history ||= new Map();
     const elements = new Map();
     const timers = new Map();
@@ -27,6 +27,7 @@ function setup(fetch, storage = new Map(), database = {profiles:new Map(), lists
         document: {querySelector: element, querySelectorAll: selector => selector === '[data-genre]' ? genreFilters : [],addEventListener() {}},
         localStorage: {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value)},
         fetch: async (url, options = {}) => {
+            if (url === '/profile-logout') return {ok:true,json:async () => ({logged_out:true})};
             if (!url.startsWith('/profiles')) return fetch(url, options);
             const parts = url.split('/').map(decodeURIComponent);
             const method = options.method || 'GET';
@@ -34,6 +35,8 @@ function setup(fetch, storage = new Map(), database = {profiles:new Map(), lists
             const result = data => ({ok:true,json:async () => data});
             if (database.failWrites && method !== 'GET') return {ok:false,status:503,json:async () => ({})};
             if (parts.length === 2) return result({profiles:[...database.profiles.values()].filter(profile => !profile.archived).map(profile => ({...profile})),archived_ids:[...database.profiles.values()].filter(profile => profile.archived).map(profile => profile.id)});
+            if (parts[3] === 'login') return body.pin === '4567' ? result({must_change_pin:!!database.mustChangePin}) : {ok:false,status:422,json:async () => ({errors:{pin:['Incorrect PIN. Please try again.']}})};
+            if (parts[3] === 'pin') return result({changed:true});
             if (parts.length === 3) {
                 if (method === 'DELETE') {
                     database.profiles.get(parts[2]).archived = true;
@@ -60,6 +63,7 @@ function setup(fetch, storage = new Map(), database = {profiles:new Map(), lists
         setTimeout: (callback, delay) => { timers.set(++timerId,{callback,delay}); return timerId; }, clearTimeout: id => timers.delete(id),
     });
     vm.runInContext(source, context);
+    vm.runInContext(readFileSync('public/js/profile-security.js','utf8'), context);
     vm.runInContext(readFileSync('public/js/history.js','utf8'), context);
     vm.runInContext(readFileSync('public/js/playback.js','utf8'), context);
     if (withReleases) vm.runInContext(readFileSync('public/js/releases.js','utf8'), context);
@@ -70,6 +74,7 @@ test('a failed catalog request shows a retryable error without preview titles', 
     let calls = 0;
     const app = setup(async () => { calls++; return calls === 1 ? {ok:false} : response([title('movie:42','Recovered title')]); });
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#catalog-status').textContent, /TMDB is temporarily unavailable/);
     assert.match(app.element('#catalog').innerHTML, /Search is incomplete/);
     assert.doesNotMatch(app.element('#catalog').innerHTML, /Interstellar|Dune/);
@@ -85,6 +90,7 @@ test('a stale search response cannot overwrite the latest results', async () => 
     await next;
     pending[0](response([title('movie:1', 'Old result')]));
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#catalog').innerHTML, /Latest title/);
     assert.doesNotMatch(app.element('#catalog').innerHTML, /Old result/);
 });
@@ -93,10 +99,12 @@ test('saved live titles survive reloads and stay separate between profiles', asy
     const storage = new Map([['void.active', JSON.stringify('joen')], ['void.lists', JSON.stringify({joen:[1]})]]);
     const app = setup(async () => response([title('movie:42', 'Saved live title')]), storage);
     await settle();
+    await signInRememberedProfile(app);
     await app.run("toggleSave('movie:42');");
     assert.deepEqual(JSON.parse(storage.get('void.lists')).joen, ['movie:693134', 'movie:42']);
     const reloaded = setup(async () => ({ok: true, json: async () => ({source:'tmdb',results:[]})}), storage, app.database);
     await settle();
+    await signInRememberedProfile(reloaded);
     reloaded.run("page = 'My list'; render();");
     assert.match(reloaded.element('#catalog').innerHTML, /Saved live title/);
     assert.match(reloaded.element('#catalog').innerHTML, /Dune: Part Two/);
@@ -107,10 +115,12 @@ test('saved live titles survive reloads and stay separate between profiles', asy
 test('database watchlists survive clearing browser storage', async () => {
     const app = setup(async () => response([title('movie:42','A saved movie')]), new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
+    await signInRememberedProfile(app);
     await app.run("toggleSave('movie:42')");
     const cleanBrowser = setup(async () => ({ok:true,json:async () => ({source:'tmdb',results:[]})}), new Map(), app.database);
     await settle();
-    await cleanBrowser.run("selectProfile('joen'); confirmProfileTransition()");
+    await signInRememberedProfile(cleanBrowser);
+    await cleanBrowser.run("selectProfile('joen'); $('#entry-pin').value = '4567'; confirmProfileTransition()");
     cleanBrowser.run("page = 'My list'; render()");
     assert.match(cleanBrowser.element('#catalog').innerHTML, /A saved movie/);
 });
@@ -118,6 +128,7 @@ test('database watchlists survive clearing browser storage', async () => {
 test('failed saves do not change the list or claim success', async () => {
     const app = setup(async () => response([title('movie:42','A saved movie')]), new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
+    await signInRememberedProfile(app);
     app.database.failWrites = true;
     await app.run("toggleSave('movie:42')");
     assert.equal(app.run("saved().includes('movie:42')"),false);
@@ -128,10 +139,12 @@ test('legacy import runs once and does not resurrect removed titles', async () =
     const storage = new Map([['void.active',JSON.stringify('joen')],['void.lists',JSON.stringify({joen:[1]})]]);
     const app = setup(async () => ({ok:true,json:async () => ({source:'tmdb',results:[]})}),storage);
     await settle();
+    await signInRememberedProfile(app);
     assert.equal(app.database.lists.get('joen').size,1);
     app.database.lists.get('joen').clear();
     const reloaded = setup(async () => ({ok:true,json:async () => ({source:'tmdb',results:[]})}),storage,app.database);
     await settle();
+    await signInRememberedProfile(reloaded);
     assert.equal(reloaded.database.lists.get('joen').size,0);
     assert.equal(reloaded.run('saved().length'),0);
 });
@@ -144,6 +157,7 @@ test('pagination deduplicates titles and failures preserve the current collectio
         return {ok:true, json:async () => ({source:'tmdb',results:count === 1 ? [title('movie:42','First')] : [title('movie:42','First'),title('movie:43','Second')],page:count,has_more:true})};
     });
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#catalog').innerHTML, /genre-posters/);
     await app.run('loadCatalog(true)');
     assert.equal(app.run('catalog.length'), 2);
@@ -161,6 +175,7 @@ test('pagination deduplicates titles and failures preserve the current collectio
 test('external titles are escaped and missing artwork has a placeholder', async () => {
     const app = setup(async () => response([title('movie:9', '<img src=x onerror=alert(1)>')]));
     await settle();
+    await signInRememberedProfile(app);
     const html = app.element('#catalog').innerHTML;
     assert.match(html, /&lt;img/);
     assert.doesNotMatch(html, /<img src=x/);
@@ -172,9 +187,11 @@ test('new catalog artwork and source credits survive a watchlist reload', async 
     const storage = new Map([['void.active', JSON.stringify('joen')]]);
     const app = setup(async () => response([movie]), storage);
     await settle();
+    await signInRememberedProfile(app);
     await app.run("toggleSave('wiki:aaaaaaaaaaaaaaaaaaaaaaaa')");
     const reloaded = setup(async () => response([]), storage, app.database);
     await settle();
+    await signInRememberedProfile(reloaded);
     reloaded.run("showDetails('wiki:aaaaaaaaaaaaaaaaaaaaaaaa')");
     assert.match(reloaded.element('#detail-content').innerHTML, /upload.wikimedia.org/);
     assert.match(reloaded.element('#detail-content').innerHTML, /Wikipedia · adapted synopsis/);
@@ -184,6 +201,7 @@ test('new catalog artwork and source credits survive a watchlist reload', async 
 test('a partial catalog failure keeps available titles and offers retry', async () => {
     const app = setup(async () => ({ok:true,json:async () => ({source:'tmdb',results:[title('wiki:aaaaaaaaaaaaaaaaaaaaaaaa','Available movie')],page:1,has_more:false,unavailable:['tv']})}));
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#catalog').innerHTML, /Available movie/);
     assert.match(app.element('#catalog-status').textContent, /Part of the catalog/);
     assert.equal(app.element('#catalog-retry').hidden, false);
@@ -193,6 +211,7 @@ test('movie player uses a fixed sandboxed origin and resumes only trusted progre
     const storage = new Map([['void.active', JSON.stringify('joen')]]);
     const app = setup(async url => url.startsWith('/playback/') ? {ok:true,json:async () => ({type:'movie',id:'42',seasons:[]})} : response([title('movie:42','Watch this')]), storage);
     await settle();
+    await signInRememberedProfile(app);
     await app.run("openPlayer('movie:42')");
     const html = app.element('#player-frame').innerHTML;
     assert.match(html, /https:\/\/cinesrc.st\/embed\/movie\/42/);
@@ -215,6 +234,7 @@ test('closing the player cancels a late mapping response', async () => {
     let finish;
     const app = setup(async url => url.startsWith('/playback/') ? new Promise(resolve => { finish = resolve; }) : response([title('movie:42','Watch this')]), new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
+    await signInRememberedProfile(app);
     const pending = app.run("openPlayer('movie:42')");
     app.run('closePlayer()');
     finish({ok:true,json:async () => ({type:'movie',id:'42',seasons:[]})});
@@ -226,6 +246,7 @@ test('closing the player cancels a late mapping response', async () => {
 test('an empty partial response does not claim a complete search had no matches', async () => {
     const app = setup(async () => ({ok:true,json:async () => ({source:'tmdb',results:[],page:1,has_more:false,unavailable:['movie']})}));
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#catalog').innerHTML, /Search is incomplete/);
     assert.equal(app.element('#catalog-retry').hidden, false);
 });
@@ -234,6 +255,7 @@ test('new-release carousel advances horizontally after its delay and pauses for 
     const releases = [{...title('movie:81','First release'),backdrop:'https://image.tmdb.org/t/p/w1280/art.jpg',release_date:'2026-10-20'},title('movie:82','Second release')];
     const app = setup(async url => url === '/releases' ? response(releases) : response([]),new Map([['void.active',JSON.stringify('joen')]]),undefined,true);
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#release-track').innerHTML, /First release/);
     assert.doesNotMatch(app.element('#release-track').innerHTML, /My list|Dune: Part Two/);
     app.run('refreshReleaseRotation()');
@@ -262,6 +284,7 @@ test('new-release carousel advances horizontally after its delay and pauses for 
 test('failed release feeds show a retry option without pretending an old film is new', async () => {
     const app = setup(async url => url === '/releases' ? {ok:false} : response([]),new Map(),undefined,true);
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#release-status').textContent,/couldn’t load/);
     assert.equal(app.element('#retry-releases').hidden,false);
     assert.equal(app.run('releaseMovies.length'),0);
@@ -270,6 +293,7 @@ test('failed release feeds show a retry option without pretending an old film is
 test('recent history starts after real playback and survives a new browser without mixing profiles', async () => {
     const app = setup(async url => url.startsWith('/playback/') ? {ok:true,json:async () => ({type:'movie',id:'42',seasons:[]})} : response([title('movie:42','Recently played')]),new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
+    await signInRememberedProfile(app);
     await app.run("openPlayer('movie:42')");
     assert.equal(app.database.history.get('joen').size,0);
     app.run("handlePlayerMessage({origin:'https://cinesrc.st',source:$('#cinesrc-player').contentWindow,data:{type:'cinesrc:pause',currentTime:120,duration:600}})");
@@ -283,11 +307,12 @@ test('recent history starts after real playback and survives a new browser witho
     assert.match(app.element('#recent-content').innerHTML,/2 min watched/);
     const reloaded = setup(async () => response([]),new Map(),app.database);
     await settle();
-    await reloaded.run("selectProfile('joen'); confirmProfileTransition()");
+    await signInRememberedProfile(reloaded);
+    await reloaded.run("selectProfile('joen'); $('#entry-pin').value = '4567'; confirmProfileTransition()");
     await settle();
     assert.match(reloaded.element('#recent-content').innerHTML,/Recently played/);
     assert.equal(JSON.parse(reloaded.storage.get('void.playback.v1'))['joen:movie:42'].position,120);
-    await reloaded.run("selectProfile('guest'); confirmProfileTransition()");
+    await reloaded.run("selectProfile('guest'); $('#entry-pin').value = '4567'; confirmProfileTransition()");
     await settle();
     assert.doesNotMatch(reloaded.element('#recent-content').innerHTML,/Recently played/);
 });
@@ -295,6 +320,7 @@ test('recent history starts after real playback and survives a new browser witho
 test('history stays with the playback profile if the active profile changes during a save', async () => {
     const app = setup(async url => url.startsWith('/playback/') ? {ok:true,json:async () => ({type:'movie',id:'42',seasons:[]})} : response([title('movie:42','A movie')]),new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
+    await signInRememberedProfile(app);
     await app.run("openPlayer('movie:42')");
     app.run("handlePlayerMessage({origin:'https://cinesrc.st',source:$('#cinesrc-player').contentWindow,data:{type:'cinesrc:play'}})");
     app.run("activeProfile = profiles.find(profile => profile.id === 'guest'); handlePlayerMessage({origin:'https://cinesrc.st',source:$('#cinesrc-player').contentWindow,data:{type:'cinesrc:pause',currentTime:120,duration:600}})");
@@ -307,6 +333,7 @@ test('history stays with the playback profile if the active profile changes duri
 test('failed history saves preserve local progress and show an error without a false entry', async () => {
     const app = setup(async url => url.startsWith('/playback/') ? {ok:true,json:async () => ({type:'movie',id:'42',seasons:[]})} : response([title('movie:42','A movie')]),new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
+    await signInRememberedProfile(app);
     await app.run("openPlayer('movie:42')");
     app.database.failWrites = true;
     app.run("handlePlayerMessage({origin:'https://cinesrc.st',source:$('#cinesrc-player').contentWindow,data:{type:'cinesrc:play'}})");
@@ -323,6 +350,7 @@ test('catalog groups movies and series into all their genres while search stays 
         {...title('tv:42','A funny series'),type:'Series',genre:'Sci-Fi & Fantasy',genres:['Sci-Fi & Fantasy','Comedy']},
     ]));
     await settle();
+    await signInRememberedProfile(app);
     const html = app.element('#catalog').innerHTML;
     assert.match(html,/Horror movies/);
     assert.match(html,/Romance movies/);
@@ -338,6 +366,7 @@ test('catalog groups movies and series into all their genres while search stays 
 test('selected genres use the correct movie and combined TV headings', async () => {
     const app = setup(async () => response([{...title('tv:42','Fantasy series'),type:'Series',genres:['Sci-Fi & Fantasy','Drama']} ]));
     await settle();
+    await signInRememberedProfile(app);
     app.run("genre='Fantasy'; render()");
     assert.match(app.element('#catalog').innerHTML,/Sci-Fi &amp; Fantasy series/);
     assert.doesNotMatch(app.element('#catalog').innerHTML,/Drama series/);
@@ -346,6 +375,7 @@ test('selected genres use the correct movie and combined TV headings', async () 
 test('genre row arrows move a page and disable at either end', async () => {
     const app = setup(async () => response([]));
     await settle();
+    await signInRememberedProfile(app);
     app.run(`
         const previous = {dataset:{rowDirection:'-1'},addEventListener(event, callback) {this.click = callback;}};
         const next = {dataset:{rowDirection:'1'},addEventListener(event, callback) {this.click = callback;}};
@@ -382,6 +412,7 @@ test('Discover shows four short curated rows and opens a paginated genre gallery
         return response(Array.from({length:20},(_,index) => ({...title(`${media}:${label}${index}`,`${label} title ${index}`),type:media === 'tv' ? 'Series' : 'Movies',genre:label,genres:[label]})));
     },new Map(),undefined,false,filters);
     await settle();
+    await signInRememberedProfile(app);
     assert.equal(calls.length,4);
     assert.equal(calls.filter(params => params.get('type') === 'tv').length,1);
     assert.match(app.element('#catalog').innerHTML,/Romance movies/);
@@ -415,6 +446,7 @@ test('Discover preserves successful rows when another genre fails and retries on
         return response([{...title('movie:' + params.get('genre'),params.get('genre') + ' film'),genre:params.get('genre')}]);
     },new Map(),undefined,false,[genreFilter('Horror','Movies'),genreFilter('Romance','Movies')]);
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#catalog').innerHTML,/Horror film/);
     assert.match(app.element('#catalog').innerHTML,/This genre is temporarily unavailable/);
     assert.equal(app.element('#catalog-retry').hidden,false);
@@ -438,82 +470,47 @@ test('leaving Discover cancels its pending feeds without replacing a newer searc
     assert.ok(pending.every(item => item.signal.aborted));
     pending.forEach(item => item.resolve(response([title('movie:1','Stale genre')])));
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#catalog').innerHTML,/Search winner/);
     assert.doesNotMatch(app.element('#catalog').innerHTML,/Stale genre/);
     assert.equal(pending.length,4);
 });
 
-test('archiving requires confirmation, preserves data, and clears an archived active profile without resurrecting it', async () => {
-    const storage = new Map([['void.active',JSON.stringify('joen')]]);
-    const app = setup(async () => response([]),storage);
-    await settle();
-    app.run("editingProfiles = true; selectProfile('joen'); requestProfileArchive();");
-    assert.equal(app.database.profiles.get('joen').archived,undefined);
-    assert.equal(app.element('#archive-confirmation').open,true);
-    assert.match(app.element('#archive-title').textContent,/Joen/);
-    app.element('#cancel-archive').listeners.click();
-    assert.equal(app.element('#archive-confirmation').open,false);
-    assert.equal(app.database.profiles.get('joen').archived,undefined);
-    app.run('requestProfileArchive()');
-    app.database.lists.get('joen').set('movie:42',title('movie:42','Kept movie'));
-    await app.run('confirmProfileArchive()');
-    assert.equal(app.database.profiles.get('joen').archived,true);
-    assert.ok(app.database.lists.get('joen').has('movie:42'));
-    assert.equal(app.run('activeProfile'),null);
-    assert.equal(JSON.parse(storage.get('void.active')),null);
-    assert.equal(app.element('#archive-confirmation').open,false);
-    storage.set('void.profiles',JSON.stringify([{id:'joen',name:'Joen'},{id:'guest',name:'Guest'}]));
-    const reloaded = setup(async () => response([]),storage,app.database);
-    await settle();
-    assert.equal(reloaded.run("profiles.some(profile => profile.id === 'joen')"),false);
-    assert.equal(app.database.profiles.get('joen').archived,true);
-});
-
-test('a failed archive keeps the profile and confirmation open with a visible error', async () => {
-    const app = setup(async () => response([]));
-    await settle();
-    app.run("editingProfiles = true; selectProfile('guest'); requestProfileArchive();");
-    app.database.failWrites = true;
-    await app.run('confirmProfileArchive()');
-    assert.equal(app.database.profiles.get('guest').archived,undefined);
-    assert.equal(app.element('#archive-confirmation').open,true);
-    assert.match(app.element('#archive-error').textContent,/Could not reach/);
-    assert.equal(app.element('#confirm-archive').disabled,false);
-});
-
 test('entering and leaving profiles require confirmation and Cancel keeps the current profile', async () => {
     const app = setup(async () => response([]));
     await settle();
+    await signInRememberedProfile(app);
     app.run("selectProfile('joen')");
-    assert.equal(app.run('activeProfile'),undefined);
+    assert.equal(app.run('activeProfile'),null);
     assert.equal(app.element('#profile-confirmation').open,true);
     assert.equal(app.element('#profile-confirm-title').textContent,'Watch as Joen?');
     app.element('#cancel-profile-transition').listeners.click();
-    assert.equal(app.run('activeProfile'),undefined);
+    assert.equal(app.run('activeProfile'),null);
     assert.equal(app.element('#profile-confirmation').open,false);
-    await app.run("selectProfile('joen'); confirmProfileTransition()");
+    await app.run("selectProfile('joen'); $('#entry-pin').value = '4567'; confirmProfileTransition()");
     assert.equal(app.run('activeProfile.id'),'joen');
     assert.equal(app.element('#profile-confirmation').open,false);
-    app.element('#switch-profile').listeners.click();
+    app.element('#profile-signout').listeners.click();
     assert.equal(app.run('activeProfile.id'),'joen');
     assert.match(app.element('#profile-confirm-title').textContent,/Leave Joen/);
     app.element('#cancel-profile-transition').listeners.click();
     assert.equal(app.run('activeProfile.id'),'joen');
-    app.element('#switch-profile').listeners.click();
-    await app.run('confirmProfileTransition()');
+    app.element('#profile-signout').listeners.click();
+    await app.run("$('#entry-pin').value = '4567'; confirmProfileTransition()");
     assert.equal(app.run('activeProfile'),null);
     assert.equal(JSON.parse(app.storage.get('void.active')),null);
     assert.equal(app.element('#profiles').open,true);
     assert.equal(app.element('#profile-confirmation').open,false);
-    await app.run("selectProfile('guest'); confirmProfileTransition()");
+    await app.run("selectProfile('guest'); $('#entry-pin').value = '4567'; confirmProfileTransition()");
     assert.equal(app.run('activeProfile.id'),'guest');
 });
 
 test('a profile entry failure leaves confirmation open and does not change the selected profile', async () => {
     const app = setup(async () => response([]),new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
+    await signInRememberedProfile(app);
     app.run("readWatchlist = async () => {throw new Error('Could not load this profile.');}; selectProfile('guest')");
-    await app.run('confirmProfileTransition()');
+    await app.run("$('#entry-pin').value = '4567'; confirmProfileTransition()");
     assert.equal(app.run('activeProfile.id'),'joen');
     assert.equal(app.element('#profile-confirmation').open,true);
     assert.equal(app.element('#profile-transition-error').textContent,'Could not load this profile.');
@@ -529,6 +526,7 @@ test('Movies and Series each load independent full genre rows and reuse Discover
         return response(Array.from({length:20},(_,index) => ({...title('movie:' + index,label + ' film ' + index),genres:[label],type:params.get('type') === 'tv' ? 'Series' : 'Movies'})));
     },new Map(),undefined,false,[genreFilter('Horror','Movies'),genreFilter('Romance','Movies'),genreFilter('Comedy','Movies Series')]);
     await settle();
+    await signInRememberedProfile(app);
     const count = calls.length;
     await app.run("page = 'Movies'; loadCatalog()");
     assert.equal(calls.length,count + 1);
@@ -556,6 +554,7 @@ test('episode tiles count releases, resume an aired episode, and explain upcomin
         {number:3,name:'Unknown',air_date:null,released:false},
     ]));
     await settle();
+    await signInRememberedProfile(app);
     app.storage.set('void.playback.v1',JSON.stringify({'joen:tv:42':{season:1,episode:1,position:45,duration:1000}}));
     await app.run("openPlayer('tv:42')");
     assert.equal(app.element('#episode-count').textContent,'1 of 3 episodes released');
@@ -573,6 +572,7 @@ test('unreleased seasons never mount a player and failed episode feeds offer ret
     let failed = false;
     const app = seriesPlayer(async () => failed ? {ok:false} : seasonResponse(1,[{number:1,name:'Upcoming',air_date:'2099-01-01',released:false}]));
     await settle();
+    await signInRememberedProfile(app);
     await app.run("openPlayer('tv:42')");
     assert.equal(app.element('#episode-count').textContent,'0 of 1 episodes released');
     assert.equal(app.element('#player-frame').innerHTML,'');
@@ -587,6 +587,7 @@ test('late season responses cannot overwrite the newly selected season or reopen
     const pending = [];
     const app = seriesPlayer((url,options) => new Promise(resolve => pending.push({url,resolve,signal:options.signal})));
     await settle();
+    await signInRememberedProfile(app);
     const opening = app.run("openPlayer('tv:42')");
     await settle();
     app.element('#player-season').value = '2';
@@ -614,6 +615,7 @@ test('new-release Explore more keeps its collection and pagination in a full gal
         return response(Array.from({length:20},(_,index) => title('movie:' + index,'Release ' + index)));
     },new Map(),undefined,false,[genreFilter('Horror','Movies'),genreFilter('Romance','Movies')]);
     await settle();
+    await signInRememberedProfile(app);
     await app.run("openGenreGallery('Series','All','recent')");
     assert.equal(calls.at(-1).get('collection'),'recent');
     assert.equal(calls.at(-1).get('type'),'tv');
@@ -631,6 +633,7 @@ test('genre rows appear before slower feeds finish and cached tabs restore synch
     assert.match(app.element('#catalog').innerHTML,/Loading titles/);
     pending[0](response([title('movie:101','Ready immediately')]));
     await settle();
+    await signInRememberedProfile(app);
     assert.match(app.element('#catalog').innerHTML,/Ready immediately/);
     assert.match(app.element('#catalog').innerHTML,/Loading titles/);
     pending.slice(1).forEach(resolve => resolve(response([title('movie:102','Other row')])));
@@ -648,6 +651,7 @@ test('offscreen genres wait for visibility and navigation cancels waiting rows',
     const app = setup(async url => { calls.push(url); return response([title('movie:1','Loaded row')]); },new Map(),undefined,false,
         ['Horror','Romance','Comedy','Drama','Action','Fantasy'].map(label => genreFilter(label,'Movies')));
     await settle();
+    await signInRememberedProfile(app);
     app.run(`
         globalThis.IntersectionObserver = class { constructor(callback) {} observe() {} disconnect() {} };
         discoverCache.clear();
@@ -670,6 +674,7 @@ test('expired genre rows remain visible while refreshing', async () => {
     let fail = false;
     const app = setup(async () => fail ? {ok:false} : response([title('movie:1','Cached story')]),new Map(),undefined,false,[genreFilter('Horror','Movies')]);
     await settle();
+    await signInRememberedProfile(app);
     app.run('discoverCache.forEach(entry => entry.expires = 0)');
     fail = true;
     const refreshing = app.run('loadCatalog()');
@@ -677,4 +682,52 @@ test('expired genre rows remain visible while refreshing', async () => {
     await refreshing;
     assert.match(app.element('#catalog').innerHTML,/Cached story/);
     assert.equal(app.element('#catalog-retry').hidden,false);
+});
+
+async function signInRememberedProfile(app) {
+    const id = JSON.parse(app.storage.get('void.active') || 'null');
+    if (!id || !app.database.profiles.has(id) || app.database.profiles.get(id).archived) return;
+    await app.run(`selectProfile(${JSON.stringify(id)}); $('#entry-pin').value = '4567'; confirmProfileTransition()`);
+    await settle();
+}
+
+test('remembered profiles stay locked and wrong PINs cannot open or edit them', async () => {
+    const app = setup(async () => response([]), new Map([['void.active',JSON.stringify('joen')]]));
+    await settle();
+    assert.equal(app.run('activeProfile'),null);
+    await app.run("selectProfile('joen'); $('#entry-pin').value = '9999'; confirmProfileTransition()");
+    assert.equal(app.run('activeProfile'),null);
+    assert.match(app.element('#profile-transition-error').textContent,/Incorrect PIN/);
+
+});
+
+test('reset PIN login requires changing PIN before entering the profile', async () => {
+    const app = setup(async () => response([]));
+    await settle();
+    app.database.mustChangePin = true;
+    await app.run("selectProfile('joen'); $('#entry-pin').value = '4567'; confirmProfileTransition()");
+    assert.equal(app.run('activeProfile'),null);
+    assert.equal(app.element('#pin-settings').open,true);
+    app.element('#current-pin').value = '123';
+    app.element('#changed-pin').value = '5678';
+    app.element('#changed-pin-confirm').value = '5678';
+    await app.element('#change-pin-form').listeners.submit({preventDefault(){}});
+    assert.equal(app.run('activeProfile.id'),'joen');
+    assert.equal(app.element('#pin-settings').open,false);
+});
+
+test('profile dropdown opens settings and only the active profile can be edited', async () => {
+    const app = setup(async () => response([]),new Map([['void.active',JSON.stringify('joen')]]));
+    await settle(); await signInRememberedProfile(app);
+    app.element('#profile-menu').hidden = true;
+    app.element('#switch-profile').listeners.click();
+    assert.equal(app.element('#profile-menu').hidden,false);
+    app.element('#profile-settings').listeners.click();
+    assert.equal(app.element('#profile-menu').hidden,true);
+    assert.equal(app.element('#user-settings').open,true);
+    app.element('#user-edit-profile').listeners.click();
+    assert.equal(app.run('editingProfileId'),'joen');
+    assert.equal(app.element('#profile-editor').open,true);
+    app.run("resetProfileForm(); editProfile(profiles.find(profile => profile.id === 'guest'))");
+    assert.equal(app.run('editingProfileId'),null);
 });

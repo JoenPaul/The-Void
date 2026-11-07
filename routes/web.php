@@ -20,7 +20,6 @@ Route::get('/playback/tv/{series}/season/{season}', [PlaybackController::class, 
 Route::controller(ProfileController::class)->group(function () {
     Route::get('/profiles', 'index');
     Route::put('/profiles/{profile}', 'store')->where('profile', '[A-Za-z0-9-]{1,64}');
-    Route::delete('/profiles/{profile}', 'archive')->where('profile', '[A-Za-z0-9-]{1,64}');
     Route::get('/profiles/{profile}/watchlist', 'watchlist')->where('profile', '[A-Za-z0-9-]{1,64}');
     Route::get('/profiles/{profile}/history', 'history')->where('profile', '[A-Za-z0-9-]{1,64}');
     Route::put('/profiles/{profile}/history/{title}', 'recordWatch')
@@ -31,3 +30,15 @@ Route::controller(ProfileController::class)->group(function () {
     Route::delete('/profiles/{profile}/watchlist/{title}', 'removeTitle')
         ->where('profile', '[A-Za-z0-9-]{1,64}')->where('title', '((movie|tv|tvmaze):[0-9]{1,20}|wiki:[a-f0-9]{24})');
 });
+
+Route::post('/profiles/{profile}/login', [\App\Http\Controllers\ProfileAuthController::class, 'login'])->middleware('throttle:5,1,profile-login:');
+Route::post('/profile-logout', [\App\Http\Controllers\ProfileAuthController::class, 'logout']);
+Route::put('/profiles/{profile}/pin', [\App\Http\Controllers\ProfileAuthController::class, 'changePin'])->middleware('throttle:5,1,profile-pin:');
+Route::post('/superadmin/login', [\App\Http\Controllers\SuperadminController::class, 'login'])->middleware('throttle:5,1,admin-login:');
+Route::post('/superadmin/logout', [\App\Http\Controllers\SuperadminController::class, 'logout']);
+Route::get('/superadmin/profiles', [\App\Http\Controllers\SuperadminController::class, 'profiles']);
+Route::put('/superadmin/profiles/{profile}/pin', [\App\Http\Controllers\SuperadminController::class, 'resetPin'])->middleware('throttle:30,1,admin-reset:');
+
+Route::put('/superadmin/pin', [\App\Http\Controllers\SuperadminController::class, 'changePin'])->middleware('throttle:5,1,admin-pin:');
+
+Route::put('/superadmin/profiles/{profile}/archive', [\App\Http\Controllers\SuperadminController::class, 'setArchived'])->middleware('throttle:30,1,admin-archive:');

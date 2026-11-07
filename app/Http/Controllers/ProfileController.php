@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -27,6 +28,11 @@ class ProfileController extends Controller
             $profiles = DB::table('viewer_profiles')->lockForUpdate()->get();
             $existing = $profiles->firstWhere('id', $profile);
             abort_if($existing?->deleted_at !== null, 404);
+            if ($existing) {
+                ProfileAuthController::authorize($profile);
+            } else {
+                $pin = request()->validate(['pin' => ['required', 'string', 'regex:/^[0-9]{4,12}$/', 'confirmed']]);
+            }
             $nameKey = mb_strtolower($data['name']);
 
             if ($profiles->contains(fn (object $item): bool => $item->id !== $profile && $item->name_key === $nameKey)) {
@@ -35,6 +41,7 @@ class ProfileController extends Controller
 
             DB::table('viewer_profiles')->updateOrInsert(['id' => $profile], [
                 ...$data, 'name_key' => $nameKey,
+                ...($existing ? [] : ['pin_hash' => Hash::make($pin['pin']), 'must_change_pin' => false]),
                 'created_at' => $existing?->created_at ?? now(), 'updated_at' => now(),
             ]);
 
@@ -42,26 +49,9 @@ class ProfileController extends Controller
         }, 3);
     }
 
-    public function archive(string $profile): JsonResponse
-    {
-        return DB::transaction(function () use ($profile): JsonResponse {
-            $profiles = DB::table('viewer_profiles')->lockForUpdate()->get();
-            $existing = $profiles->firstWhere('id', $profile);
-            abort_unless($existing, 404);
-            if ($existing->deleted_at !== null) {
-                return response()->json(['archived' => true]);
-            }
-            if ($profiles->whereNull('deleted_at')->count() <= 1) {
-                throw ValidationException::withMessages(['profile' => 'Keep at least one profile. Add another profile before archiving this one.']);
-            }
-            DB::table('viewer_profiles')->where('id', $profile)->update(['deleted_at' => now(), 'updated_at' => now()]);
-
-            return response()->json(['archived' => true]);
-        }, 3);
-    }
-
     public function watchlist(string $profile): JsonResponse
     {
+        ProfileAuthController::authorize($profile);
         abort_unless(DB::table('viewer_profiles')->where('id', $profile)->whereNull('deleted_at')->exists(), 404);
         $titles = DB::table('watchlist_entries')->where('profile_id', $profile)->orderBy('created_at')->orderBy('id')
             ->pluck('details')->map(fn (string $details): array => json_decode($details, true));
@@ -71,6 +61,7 @@ class ProfileController extends Controller
 
     public function saveTitle(Request $request, string $profile, string $title): JsonResponse
     {
+        ProfileAuthController::authorize($profile);
         abort_unless(DB::table('viewer_profiles')->where('id', $profile)->whereNull('deleted_at')->exists(), 404);
         $data = $this->titleData($request, $title);
 
@@ -85,6 +76,7 @@ class ProfileController extends Controller
 
     public function removeTitle(string $profile, string $title): JsonResponse
     {
+        ProfileAuthController::authorize($profile);
         abort_unless(DB::table('viewer_profiles')->where('id', $profile)->whereNull('deleted_at')->exists(), 404);
         DB::table('watchlist_entries')->where('profile_id', $profile)->where('title_key', $title)->delete();
 
@@ -93,6 +85,7 @@ class ProfileController extends Controller
 
     public function history(string $profile): JsonResponse
     {
+        ProfileAuthController::authorize($profile);
         abort_unless(DB::table('viewer_profiles')->where('id', $profile)->whereNull('deleted_at')->exists(), 404);
         $entries = DB::table('watch_history')->where('profile_id', $profile)->orderByDesc('watched_at')->orderByDesc('id')
             ->limit(100)->get()->map(fn (object $entry): array => $this->historyEntry($entry));
@@ -102,6 +95,7 @@ class ProfileController extends Controller
 
     public function recordWatch(Request $request, string $profile, string $title): JsonResponse
     {
+        ProfileAuthController::authorize($profile);
         abort_unless(DB::table('viewer_profiles')->where('id', $profile)->whereNull('deleted_at')->exists(), 404);
         $details = $this->titleData($request, $title);
         $progress = $request->validate([

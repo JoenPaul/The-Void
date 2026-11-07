@@ -34,7 +34,7 @@ let profiles = read('void.profiles', [{id:'joen',name:'Joen'},{id:'guest',name:'
 if (!Array.isArray(profiles) || !profiles.length || profiles.some(profile => !profile || typeof profile.id !== 'string' || typeof profile.name !== 'string')) {
     profiles = [{id:'guest',name:'Guest'}];
 }
-let activeProfile = profiles.find(profile => profile.id === read('void.active', null));
+let activeProfile = null;
 const storedLists = read('void.lists', {});
 let savedLists = storedLists && typeof storedLists === 'object' && !Array.isArray(storedLists) ? storedLists : {};
 Object.keys(savedLists).forEach(key => {
@@ -90,8 +90,7 @@ let requestVersion = 0, requestController, searchTimer, requestFailed = false, u
 const legacyProfiles = profiles.map(profile => ({...profile}));
 const legacyLists = {...savedLists};
 const legacyActiveId = activeProfile?.id;
-let profilesReady = false, profileBusy = false, editingProfiles = false, editingProfileId = null;
-let archiveProfileId = null;
+let profilesReady = false, profileBusy = false, editingProfileId = null;
 let profileTransition = null;
 const pendingSaves = new Set();
 const avatarSymbols = {moon:'☾',star:'✦',orbit:'◈'};
@@ -106,9 +105,10 @@ async function profileRequest(path, method = 'GET', body, options = {}) {
         ...(body ? {body:JSON.stringify(body)} : {}),
     });
     if (!response.ok) {
+        if (response.status === 429) throw new Error('Too many attempts. Please wait one minute and try again.');
         if (response.status === 419) throw new Error('Your session expired. Refresh the page and try again.');
         const error = await response.json().catch(() => ({}));
-        throw new Error(response.status === 422 ? Object.values(error.errors || {}).flat()[0] || 'Please check the profile details.' : 'Could not reach your saved profiles. Please try again.');
+        throw new Error(response.status === 422 ? Object.values(error.errors || {}).flat()[0] || 'Please check the profile details.' : ([401,403].includes(response.status) ? error.message : 'Could not reach your saved profiles. Please try again.'));
     }
     return response.json();
 }
@@ -117,6 +117,18 @@ function titlePayload(movie) {
 }
 async function readWatchlist(id) {
     const result = await profileRequest('/profiles/' + encodeURIComponent(id) + '/watchlist');
+    const imports = read('void.database-imported.v1', {});
+    if (!imports[id]) {
+        for (const titleId of legacyLists[id] || []) {
+            const movie = titleIndex.get(titleId);
+            if (movie && !result.titles.some(item => item.id === movie.id)) {
+                await profileRequest('/profiles/' + encodeURIComponent(id) + '/watchlist/' + encodeURIComponent(movie.id), 'PUT', titlePayload(movie));
+                result.titles.push(movie);
+            }
+        }
+        imports[id] = true;
+        write('void.database-imported.v1', imports);
+    }
     result.titles.forEach(movie => titleIndex.set(movie.id, movie));
     savedLists[id] = result.titles.map(movie => movie.id);
 }
@@ -133,37 +145,8 @@ async function loadProfiles() {
     renderProfiles();
     try {
         const result = await profileRequest('/profiles');
-        const remote = result.profiles;
-        const imports = read('void.database-imported.v1', {});
-        const shouldImport = !remote.length || read('void.profiles', null) || Object.keys(legacyLists).length;
-        const mapping = {};
-        if (shouldImport) {
-            for (const legacy of legacyProfiles) {
-                if ((result.archived_ids || []).includes(legacy.id)) continue;
-                let match = remote.find(profile => profile.id === legacy.id || profile.name.toLowerCase() === legacy.name.toLowerCase());
-                if (!match) {
-                    const created = await profileRequest('/profiles/' + encodeURIComponent(legacy.id), 'PUT', {name:legacy.name,avatar:avatarClass(legacy)});
-                    match = created.profile;
-                    remote.push(match);
-                }
-                mapping[legacy.id] = match.id;
-                if (!imports[legacy.id]) {
-                    const existing = await profileRequest('/profiles/' + encodeURIComponent(match.id) + '/watchlist');
-                    const existingIds = new Set(existing.titles.map(movie => movie.id));
-                    for (const titleId of legacyLists[legacy.id] || []) {
-                        const movie = titleIndex.get(titleId);
-                        if (movie && !existingIds.has(movie.id)) {
-                            await profileRequest('/profiles/' + encodeURIComponent(match.id) + '/watchlist/' + encodeURIComponent(movie.id), 'PUT', titlePayload(movie));
-                        }
-                    }
-                    imports[legacy.id] = true;
-                    write('void.database-imported.v1', imports);
-                }
-            }
-        }
-        profiles = remote;
-        activeProfile = profiles.find(profile => profile.id === (mapping[legacyActiveId] || legacyActiveId));
-        if (activeProfile) await readWatchlist(activeProfile.id);
+        profiles = result.profiles;
+        activeProfile = null;
         profilesReady = true;
         write('void.profiles', profiles);
         $('#profile-error').textContent = '';
@@ -183,20 +166,11 @@ async function selectProfile(id) {
     if (!profilesReady || profileBusy) return;
     const profile = profiles.find(item => item.id === id);
     if (!profile) return;
-    if (editingProfiles) {
-        editingProfileId = id;
-        $('#new-name').value = profile.name;
-        $('#avatar-choice').value = avatarClass(profile);
-        $('#profile-form-label').textContent = 'Edit ' + profile.name;
-        $('#save-profile').textContent = 'Save changes';
-        $('#cancel-edit').hidden = false;
-        $('#archive-profile').hidden = false;
-        $('#new-name').focus();
-        return;
-    }
     profileTransition = {action:'enter',id};
+    $('#entry-pin').value = '';
+    $('#entry-pin-label').hidden = false;
     $('#profile-confirm-title').textContent = 'Watch as ' + profile.name + '?';
-    $('#profile-confirm-description').textContent = 'Use this profile’s watchlist and viewing history.';
+    $('#profile-confirm-description').textContent = 'Enter your PIN to unlock this profile.';
     $('#confirm-profile-transition').textContent = 'Enter profile';
     $('#profile-transition-error').textContent = '';
     $('#profile-confirmation').showModal();
@@ -225,12 +199,12 @@ function requestProfileLeave() {
     profileTransition = {action:'leave',id:activeProfile.id};
     $('#profile-confirm-title').textContent = 'Leave ' + activeProfile.name + '’s profile?';
     $('#profile-confirm-description').textContent = 'Return to Who’s watching. Your watchlist and viewing history will stay saved.';
+    $('#entry-pin-label').hidden = true;
     $('#confirm-profile-transition').textContent = 'Leave profile';
     $('#profile-transition-error').textContent = '';
     $('#profile-confirmation').showModal();
 }
 function showProfileChooser() {
-    editingProfiles = false;
     resetProfileForm();
     renderProfiles();
     if (!$('#profiles').open) $('#profiles').showModal();
@@ -241,13 +215,27 @@ async function confirmProfileTransition() {
     $('#confirm-profile-transition').disabled = true;
     $('#cancel-profile-transition').disabled = true;
     try {
-        if (transition.action === 'enter') {
+        if (transition.action === 'enter' || transition.action === 'edit') {
+            const login = await profileRequest('/profiles/' + encodeURIComponent(transition.id) + '/login', 'POST', {pin:$('#entry-pin').value});
+            $('#entry-pin').value = '';
+            if (login.must_change_pin) {
+                $('#profile-confirmation').close();
+                openPinSettings(transition.id, transition);
+                return;
+            }
+            if (transition.action === 'edit') {
+                editProfile(profiles.find(profile => profile.id === transition.id));
+                $('#profile-confirmation').close();
+                profileTransition = null;
+                return;
+            }
             if (!await enterProfile(transition.id)) {
                 $('#profile-transition-error').textContent = $('#profile-error').textContent || 'Could not open this profile. Please try again.';
                 return;
             }
         } else {
             if (typeof closePlayer === 'function') closePlayer();
+            await profileRequest('/profile-logout', 'POST');
             activeProfile = null;
             write('void.active',null);
             $('#profile-name').textContent = 'Choose profile';
@@ -258,76 +246,55 @@ async function confirmProfileTransition() {
         }
         profileTransition = null;
         $('#profile-confirmation').close();
+    } catch (error) {
+        $('#profile-transition-error').textContent = error.message;
     } finally {
         $('#confirm-profile-transition').disabled = false;
         $('#cancel-profile-transition').disabled = false;
     }
 }
+function editProfile(profile) {
+        if (!activeProfile || activeProfile.id !== profile?.id) return;
+        const id = profile.id;
+        editingProfileId = id;
+        $('#new-name').value = profile.name;
+        $('#avatar-choice').value = avatarClass(profile);
+        $('#profile-form-label').textContent = 'Edit ' + profile.name;
+        $('#save-profile').textContent = 'Save changes';
+        $('#cancel-edit').hidden = false;
+        $('#profile-form-error').textContent = '';
+        $('#profile-editor').showModal();
+        $('#new-name').focus();
+        $('#new-pin-fields').hidden = true;
+        $('#new-pin').required = false;
+        $('#confirm-new-pin').required = false;
+}
+
 function resetProfileForm() {
+    $('#profile-editor').close();
+    $('#profile-form-error').textContent = '';
+    $('#new-pin-fields').hidden = false;
+    $('#new-pin').required = true;
+    $('#confirm-new-pin').required = true;
+    $('#new-pin').value = '';
+    $('#confirm-new-pin').value = '';
     editingProfileId = null;
     $('#new-name').value = '';
     $('#avatar-choice').value = 'violet';
-    $('#profile-form-label').textContent = 'Make it yours';
+    $('#profile-form-label').textContent = 'Create your profile';
     $('#save-profile').textContent = '＋ Add profile';
-    $('#cancel-edit').hidden = true;
-    $('#archive-profile').hidden = true;
-}
-
-function requestProfileArchive() {
-    if (!editingProfileId || profileBusy || !profilesReady) return;
-    const profile = profiles.find(item => item.id === editingProfileId);
-    if (!profile) return;
-    archiveProfileId = profile.id;
-    $('#archive-title').textContent = 'Archive ' + profile.name + '?';
-    $('#archive-description').textContent = 'This profile will be hidden from Who’s watching. Its watchlist and viewing history will be kept.';
-    $('#archive-error').textContent = '';
-    $('#archive-confirmation').showModal();
-}
-async function confirmProfileArchive() {
-    if (!archiveProfileId || profileBusy || !profilesReady) return;
-    const id = archiveProfileId;
-    profileBusy = true;
-    $('#archive-error').textContent = '';
-    $('#confirm-archive').disabled = true;
-    $('#cancel-archive').disabled = true;
-    renderProfiles();
-    try {
-        await profileRequest('/profiles/' + encodeURIComponent(id),'DELETE');
-        profiles = profiles.filter(profile => profile.id !== id);
-        write('void.profiles',profiles);
-        if (activeProfile?.id === id) {
-            if (typeof closePlayer === 'function') closePlayer();
-            activeProfile = null;
-            write('void.active',null);
-            $('#profile-name').textContent = 'Choose profile';
-            $('#profile-avatar').textContent = '?';
-            updateSaveButtons();
-        }
-        resetProfileForm();
-        archiveProfileId = null;
-        $('#archive-confirmation').close();
-        $('#profile-error').textContent = 'Profile archived. Watchlist and viewing history kept.';
-        render();
-    } catch (error) { $('#archive-error').textContent = error.message; }
-    finally {
-        profileBusy = false;
-        $('#confirm-archive').disabled = false;
-        $('#cancel-archive').disabled = false;
-        renderProfiles();
-    }
+    $('#cancel-edit').hidden = false;
 }
 
 function renderProfiles() {
-    $('#profile-cards').innerHTML = profiles.map(profile => `<button class="profile-card" data-profile="${escapeHtml(profile.id)}" ${!profilesReady || profileBusy ? 'disabled' : ''}><span class="avatar avatar-${avatarClass(profile)}">${escapeHtml(avatarFor(profile))}</span>${escapeHtml(profile.name)}${editingProfiles ? '<span class="edit-hint">Edit profile</span>' : ''}</button>`).join('');
+    $('#profile-cards').innerHTML = profiles.map(profile => `<button class="profile-card" data-profile="${escapeHtml(profile.id)}" ${!profilesReady || profileBusy ? 'disabled' : ''}><span class="avatar avatar-${avatarClass(profile)}">${escapeHtml(avatarFor(profile))}</span>${escapeHtml(profile.name)}</button>`).join('');
     $('#profile-cards').querySelectorAll('button').forEach(button => button.addEventListener('click', () => selectProfile(button.dataset.profile)));
     $('#profile-cards').setAttribute('aria-busy',String(profileBusy));
     $('#save-profile').disabled = !profilesReady || profileBusy;
-    $('#manage-profiles').disabled = !profilesReady || profileBusy;
-    $('#archive-profile').disabled = !profilesReady || profileBusy;
+    $('#open-add-profile').disabled = !profilesReady || profileBusy;
     $('#cancel-edit').disabled = profileBusy;
-    $('#profiles-title').textContent = editingProfiles ? 'Make it your own.' : 'Who’s watching?';
-    $('#profile-subtitle').textContent = editingProfiles ? 'Choose a profile to edit its name and avatar.' : 'Pick a profile. Find your escape.';
-    $('#manage-profiles').textContent = editingProfiles ? 'Done editing' : 'Edit profiles';
+    $('#profiles-title').textContent = 'Who’s watching?';
+    $('#profile-subtitle').textContent = 'Pick a profile. Find your escape.';
 }
 function updateProfile() {
     if (!activeProfile) return;
@@ -631,10 +598,10 @@ $('#add-profile').addEventListener('submit', async event => {
     if (!name || !profilesReady || profileBusy) return;
     const id = editingProfileId || crypto.randomUUID();
     profileBusy = true;
-    $('#profile-error').textContent = '';
+    $('#profile-form-error').textContent = '';
     renderProfiles();
     try {
-        const result = await profileRequest('/profiles/' + encodeURIComponent(id), 'PUT', {name,avatar:$('#avatar-choice').value});
+        const result = await profileRequest('/profiles/' + encodeURIComponent(id), 'PUT', {name,avatar:$('#avatar-choice').value,...(editingProfileId ? {} : {pin:$('#new-pin').value,pin_confirmation:$('#confirm-new-pin').value})});
         const index = profiles.findIndex(profile => profile.id === id);
         if (index >= 0) profiles[index] = result.profile;
         else profiles.push(result.profile);
@@ -642,18 +609,19 @@ $('#add-profile').addEventListener('submit', async event => {
         write('void.profiles',profiles);
         resetProfileForm();
         $('#profile-error').textContent = 'Profile saved.';
-    } catch (error) { $('#profile-error').textContent = error.message; }
+    } catch (error) { $('#profile-form-error').textContent = error.message; }
     finally { profileBusy = false; renderProfiles(); }
 });
-$('#manage-profiles').addEventListener('click', () => { editingProfiles = !editingProfiles; resetProfileForm(); $('#profile-error').textContent = ''; renderProfiles(); });
-$('#cancel-edit').addEventListener('click', resetProfileForm);
-$('#archive-profile').addEventListener('click', requestProfileArchive);
-$('#confirm-archive').addEventListener('click', confirmProfileArchive);
-$('#cancel-archive').addEventListener('click', () => { if (!profileBusy) { archiveProfileId = null; $('#archive-confirmation').close(); } });
-$('#archive-confirmation').addEventListener('cancel', event => { if (profileBusy) event.preventDefault(); else archiveProfileId = null; });
+$('#open-add-profile').addEventListener('click', () => {
+    if (!profilesReady || profileBusy) return;
+    resetProfileForm();
+    $('#profile-editor').showModal();
+    $('#new-name').focus();
+});
+$('#profile-editor').addEventListener('cancel', event => { event.preventDefault(); if (!profileBusy) resetProfileForm(); });
+$('#cancel-edit').addEventListener('click', () => { if (!profileBusy) resetProfileForm(); });
 $('#retry-profiles').addEventListener('click', loadProfiles);
 $('#profiles').addEventListener('cancel', event => { if (!activeProfile) event.preventDefault(); });
-$('#switch-profile').addEventListener('click', requestProfileLeave);
 $('#confirm-profile-transition').addEventListener('click', confirmProfileTransition);
 $('#cancel-profile-transition').addEventListener('click', () => { if (!profileBusy) { profileTransition = null; $('#profile-confirmation').close(); } });
 $('#profile-confirmation').addEventListener('cancel', event => { if (profileBusy) event.preventDefault(); else profileTransition = null; });

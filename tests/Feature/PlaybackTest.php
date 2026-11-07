@@ -44,7 +44,8 @@ class PlaybackTest extends TestCase
 
     public function test_legacy_saved_series_match_via_tmdb_without_calling_tvmaze(): void
     {
-        $this->putJson('/profiles/alex', ['name' => 'Alex', 'avatar' => 'moon']);
+        $this->putJson('/profiles/alex', ['name' => 'Alex', 'avatar' => 'moon', 'pin' => '4567', 'pin_confirmation' => '4567']);
+        $this->postJson('/profiles/alex/login', ['pin' => '4567'])->assertOk();
         $this->putJson('/profiles/alex/watchlist/tvmaze:42', ['title' => 'A series', 'year' => '2023',
             'type' => 'Series', 'genre' => 'Drama', 'genres' => [], 'rating' => '—', 'image' => null, 'description' => 'A series.'])->assertOk();
         Http::fake([
@@ -66,7 +67,8 @@ class PlaybackTest extends TestCase
     {
         $id = 'wiki:'.str_repeat('a', 24);
         $this->assertFalse(Schema::hasTable('catalog_movies'));
-        $this->putJson('/profiles/alex', ['name' => 'Alex', 'avatar' => 'moon'])->assertCreated();
+        $this->putJson('/profiles/alex', ['name' => 'Alex', 'avatar' => 'moon', 'pin' => '4567', 'pin_confirmation' => '4567'])->assertCreated();
+        $this->postJson('/profiles/alex/login', ['pin' => '4567'])->assertOk();
         $this->putJson('/profiles/alex/watchlist/'.$id, ['title' => 'A Film', 'year' => '2023',
             'type' => 'Movies', 'genre' => 'Drama', 'genres' => [], 'rating' => '—', 'image' => null, 'description' => 'A film.'])->assertOk();
         Http::fake(['*' => Http::sequence()->push(['results' => [
