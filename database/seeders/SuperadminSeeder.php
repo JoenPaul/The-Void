@@ -16,9 +16,11 @@ class SuperadminSeeder extends Seeder
      */
     public function run(): void
     {
-        DB::table('superadmin_credentials')->updateOrInsert(
-            ['id' => 1],
-            ['pin_hash' => Hash::make('123456')]
-        );
+        if (! DB::table('superadmin_credentials')->exists()) {
+            DB::table('superadmin_credentials')->insert([
+                'id' => 1,
+                'pin_hash' => Hash::make('123456')
+            ]);
+        }
     }
 }
