@@ -121,6 +121,7 @@ test('database watchlists survive clearing browser storage', async () => {
     await settle();
     await signInRememberedProfile(cleanBrowser);
     await cleanBrowser.run("selectProfile('joen'); $('#entry-pin').value = '4567'; confirmProfileTransition()");
+    await settle();
     cleanBrowser.run("page = 'My list'; render()");
     assert.match(cleanBrowser.element('#catalog').innerHTML, /A saved movie/);
 });
@@ -232,10 +233,10 @@ test('movie player uses a fixed sandboxed origin and resumes only trusted progre
 
 test('closing the player cancels a late mapping response', async () => {
     let finish;
-    const app = setup(async url => url.startsWith('/playback/') ? new Promise(resolve => { finish = resolve; }) : response([title('movie:42','Watch this')]), new Map([['void.active',JSON.stringify('joen')]]));
+    const app = setup(async url => url.startsWith('/playback/') ? new Promise(resolve => { finish = resolve; }) : response([{...title('tv:42','Watch this'),type:'Series'}]), new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
     await signInRememberedProfile(app);
-    const pending = app.run("openPlayer('movie:42')");
+    const pending = app.run("openPlayer('tv:42')");
     app.run('closePlayer()');
     finish({ok:true,json:async () => ({type:'movie',id:'42',seasons:[]})});
     await pending;
@@ -505,15 +506,24 @@ test('entering and leaving profiles require confirmation and Cancel keeps the cu
     assert.equal(app.run('activeProfile.id'),'guest');
 });
 
-test('a profile entry failure leaves confirmation open and does not change the selected profile', async () => {
+test('watchlist failures allow authenticated profile entry and offer retry without allowing unsafe saves', async () => {
     const app = setup(async () => response([]),new Map([['void.active',JSON.stringify('joen')]]));
     await settle();
     await signInRememberedProfile(app);
     app.run("readWatchlist = async () => {throw new Error('Could not load this profile.');}; selectProfile('guest')");
     await app.run("$('#entry-pin').value = '4567'; confirmProfileTransition()");
-    assert.equal(app.run('activeProfile.id'),'joen');
-    assert.equal(app.element('#profile-confirmation').open,true);
-    assert.equal(app.element('#profile-transition-error').textContent,'Could not load this profile.');
+    await settle();
+    assert.equal(app.run('activeProfile.id'),'guest');
+    assert.equal(app.element('#profile-confirmation').open,false);
+    app.run("page = 'My list'; render()");
+    assert.equal(app.element('#catalog-retry').hidden,false);
+    await app.run("toggleSave('movie:693134')");
+    assert.match(app.element('#toast').textContent,/couldn’t sync/);
+    app.run("readWatchlist = async id => { savedLists[id] = ['movie:693134']; }");
+    app.element('#catalog-retry').listeners.click();
+    await settle();
+    assert.equal(app.element('#catalog-retry').hidden,true);
+    assert.match(app.element('#catalog').innerHTML,/Dune: Part Two/);
     assert.equal(app.element('#confirm-profile-transition').disabled,false);
 });
 
@@ -748,4 +758,63 @@ test('admin navigation collapses the mobile menu and resets content scrolling', 
     assert.equal(app.run('adminMenuOpen'),false);
     assert.equal(app.element('#admin-menu-toggle').hidden,true);
     assert.equal(app.element('#admin-workspace').hidden,true);
+});
+
+test('authenticated profiles open before a slow watchlist finishes and saves wait for synchronization', async () => {
+    const app = setup(async () => response([title('movie:42','Already saved')]));
+    await settle();
+    app.run("let finishWatchlist; readWatchlist = id => new Promise(resolve => { finishWatchlist = () => { savedLists[id] = ['movie:42']; resolve(); }; })");
+    await app.run("selectProfile('joen'); $('#entry-pin').value = '4567'; confirmProfileTransition()");
+    assert.equal(app.run('activeProfile.id'),'joen');
+    assert.equal(app.element('#profiles').open,false);
+    assert.equal(app.run("watchlistLoads.has('joen')"),true);
+    const saving = app.run("toggleSave('movie:42')");
+    assert.equal(app.run('pendingSaves.size'),0);
+    app.run('finishWatchlist()');
+    await saving;
+    assert.equal(app.run("saved().includes('movie:42')"),false);
+});
+
+test('repeat searches reuse complete results while media filters and pages stay separate', async () => {
+    const calls = [];
+    const app = setup(async url => { calls.push(url); return response([title('movie:42','A result')]); });
+    await settle();
+    await app.run("query = 'Space'; loadCatalog()");
+    const firstCount = calls.length;
+    await app.run('loadCatalog()');
+    assert.equal(calls.length,firstCount);
+    assert.match(app.element('#catalog').innerHTML,/A result/);
+    await app.run("page = 'Movies'; loadCatalog()");
+    assert.equal(calls.length,firstCount + 1);
+    await app.run('loadCatalog(true)');
+    assert.equal(calls.length,firstCount + 2);
+    app.run('searchCache.forEach(entry => entry.expires = 0)');
+    await app.run('loadCatalog()');
+    assert.equal(calls.length,firstCount + 3);
+});
+
+test('partial search results are retried rather than cached as complete', async () => {
+    let searchCalls = 0;
+    const app = setup(async url => {
+        if (url.includes('q=Space')) {
+            searchCalls++;
+            return {ok:true,json:async () => ({source:'tmdb',results:[],page:1,has_more:false,unavailable:['tv']})};
+        }
+        return response([]);
+    });
+    await settle();
+    await app.run("query = 'Space'; loadCatalog()");
+    await app.run('loadCatalog()');
+    assert.equal(searchCalls,2);
+    assert.equal(app.element('#catalog-retry').hidden,false);
+});
+
+test('TMDB movies mount the player without a preparation request', async () => {
+    const calls = [];
+    const app = setup(async url => { calls.push(url); return response([title('movie:42','Play immediately')]); },new Map([['void.active',JSON.stringify('joen')]]));
+    await settle();
+    await signInRememberedProfile(app);
+    await app.run("openPlayer('movie:42')");
+    assert.match(app.element('#player-frame').innerHTML,/embed\/movie\/42/);
+    assert.equal(calls.some(url => url.startsWith('/playback/')),false);
 });

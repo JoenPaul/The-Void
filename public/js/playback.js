@@ -40,6 +40,11 @@ async function openPlayer(id) {
     if ($('#details').open) $('#details').close();
     if (!$('#player').open) $('#player').showModal();
     try {
+        if (/^movie:[1-9][0-9]{0,9}$/.test(id)) {
+            playbackData = {type:'movie',id:id.slice(6),seasons:[]};
+            mountPlayer(playbackProgress()[playerProgressKey()]);
+            return;
+        }
         const response = await fetch('/playback/' + encodeURIComponent(id), {headers:{Accept:'application/json'},signal:playbackController.signal});
         if (!response.ok) throw new Error('Playback matching unavailable');
         const data = await response.json();

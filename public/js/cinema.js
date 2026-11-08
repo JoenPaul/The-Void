@@ -93,6 +93,8 @@ const legacyActiveId = activeProfile?.id;
 let profilesReady = false, profileBusy = false, editingProfileId = null;
 let profileTransition = null;
 const pendingSaves = new Set();
+const watchlistLoads = new Map(), watchlistErrors = new Map();
+const searchCache = new Map();
 const avatarSymbols = {moon:'☾',star:'✦',orbit:'◈'};
 const avatarFor = profile => avatarSymbols[profile.avatar] || profile.name.slice(0,1).toUpperCase();
 const avatarClass = profile => ['violet','moon','star','orbit'].includes(profile.avatar) ? profile.avatar : 'violet';
@@ -131,6 +133,22 @@ async function readWatchlist(id) {
     }
     result.titles.forEach(movie => titleIndex.set(movie.id, movie));
     savedLists[id] = result.titles.map(movie => movie.id);
+}
+function syncWatchlist(id) {
+    if (watchlistLoads.has(id)) return watchlistLoads.get(id);
+    watchlistErrors.delete(id);
+    const task = readWatchlist(id).then(() => {
+        backupWatchlists();
+        return true;
+    }).catch(error => {
+        watchlistErrors.set(id,error.message);
+        return false;
+    }).finally(() => {
+        watchlistLoads.delete(id);
+        if (activeProfile?.id === id) { updateSaveButtons(); render(); }
+    });
+    watchlistLoads.set(id,task);
+    return task;
 }
 function backupWatchlists() {
     write('void.lists', savedLists);
@@ -181,10 +199,9 @@ async function enterProfile(id) {
     profileBusy = true;
     renderProfiles();
     try {
-        await readWatchlist(id);
         activeProfile = profile;
         write('void.active', id);
-        backupWatchlists();
+        syncWatchlist(id);
         $('#profiles').close();
         $('#profile-error').textContent = '';
         updateProfile();
@@ -306,13 +323,16 @@ function updateProfile() {
 }
 function updateSaveButtons() {
     if ($('#detail-save') && currentMovie) {
-        $('#detail-save').disabled = !profilesReady || pendingSaves.has(activeProfile?.id + ':' + currentMovie.id);
+        $('#detail-save').disabled = !profilesReady || watchlistLoads.has(activeProfile?.id) || watchlistErrors.has(activeProfile?.id) || pendingSaves.has(activeProfile?.id + ':' + currentMovie.id);
         $('#detail-save').textContent = saved().includes(currentMovie.id) ? '✓ Remove from my list' : '＋ Add to my list';
     }
 }
 async function toggleSave(id) {
     if (!activeProfile || !profilesReady) { if (!$('#profiles').open) $('#profiles').showModal(); return; }
     const profileId = activeProfile.id;
+    if (watchlistLoads.has(profileId)) await watchlistLoads.get(profileId);
+    if (activeProfile?.id !== profileId) return;
+    if (watchlistErrors.has(profileId)) { notify('Your saved list couldn’t sync. Open My list and try again before making changes.'); return; }
     const key = profileId + ':' + id;
     if (pendingSaves.has(key)) return;
     const exists = saved().includes(id);
@@ -330,8 +350,11 @@ async function toggleSave(id) {
 }
 function poster(movie, lazy = false) {
     const safeImage = typeof movie.image === 'string' && /^https:\/\/(image\.tmdb\.org|lumiere-a\.akamaihd\.net|upload\.wikimedia\.org|static\.tvmaze\.com)\//.test(movie.image);
+    const responsiveImage = safeImage && movie.image.startsWith('https://image.tmdb.org/t/p/w500/')
+        ? `srcset="${escapeHtml(movie.image.replace('/w500/','/w185/'))} 185w, ${escapeHtml(movie.image.replace('/w500/','/w342/'))} 342w, ${escapeHtml(movie.image)} 500w" sizes="${lazy ? '(max-width:700px) 40vw, 200px' : '180px'}"`
+        : '';
     return safeImage
-        ? `<img src="${escapeHtml(movie.image)}" alt="${escapeHtml(movie.title)} poster" ${lazy ? 'loading="lazy"' : ''}>`
+        ? `<img src="${escapeHtml(movie.image)}" ${responsiveImage} decoding="async" alt="${escapeHtml(movie.title)} poster" ${lazy ? 'loading="lazy"' : ''}>`
         : '<span class="poster-placeholder" role="img" aria-label="No poster available">V<span>THE VOID</span></span>';
 }
 function card(movie) {
@@ -504,7 +527,7 @@ function render() {
         ? (page !== 'My list' && !query
             ? catalogCollection === 'recent' ? row(page === 'Movies' ? 'New movie releases' : 'New series releases',filtered) : genreRows(filtered)
             : row(page === 'My list' ? 'Saved for later' : 'The collection',filtered))
-        : `<div class="empty">${loading ? 'Finding your next story…' : page === 'My list' ? 'No saved titles match. Explore the collection or clear your filters.' : hasMore ? 'No matches on this page. Explore more titles below or try another filter.' : requestFailed || unavailableSources.length ? 'Search is incomplete because the catalog could not be reached. Please try again.' : 'No titles match. Try another search or genre.'}</div>`;
+        : `<div class="empty">${page === 'My list' && watchlistLoads.has(activeProfile?.id) ? 'Loading your saved titles…' : loading ? 'Finding your next story…' : page === 'My list' ? watchlistErrors.has(activeProfile?.id) ? 'Your saved list couldn’t sync. Please try again.' : 'No saved titles match. Explore the collection or clear your filters.' : hasMore ? 'No matches on this page. Explore more titles below or try another filter.' : requestFailed || unavailableSources.length ? 'Search is incomplete because the catalog could not be reached. Please try again.' : 'No titles match. Try another search or genre.'}</div>`;
     observeCatalogRows();
     $('#catalog').setAttribute('aria-busy', String(loading && !catalog.length));
     $('#catalog').querySelectorAll('[data-movie]').forEach(button => button.addEventListener('click', () => showDetails(button.dataset.movie)));
@@ -515,8 +538,8 @@ function render() {
     $('#load-more').hidden = page === 'My list' || !hasMore;
     $('#load-more').disabled = loading;
     $('#load-more').textContent = loading ? 'Loading…' : 'Explore more titles ↓';
-    $('#catalog-retry').hidden = (!requestFailed && !unavailableSources.length) || page === 'My list';
-    $('#catalog-status').textContent = page === 'My list' ? 'Saved to your profile. Ready for your next movie night.'
+    $('#catalog-retry').hidden = page === 'My list' ? !watchlistErrors.has(activeProfile?.id) : !requestFailed && !unavailableSources.length;
+    $('#catalog-status').textContent = page === 'My list' ? watchlistLoads.has(activeProfile?.id) ? 'Syncing your saved list…' : watchlistErrors.has(activeProfile?.id) ? 'Your saved list couldn’t sync. Please try again.' : 'Saved to your profile. Ready for your next movie night.'
         : loading ? (catalog.length ? 'Your collection is ready. More genres load as you browse.' : 'Finding more stories…')
         : requestFailed ? (catalogMode === 'tmdb' ? 'Couldn’t load more titles. Your current collection is still here.' : 'TMDB is temporarily unavailable. Please try again.')
         : catalogMode === 'tmdb' ? (unavailableSources.length ? 'Part of the catalog is unavailable. Your available titles are shown below.' : 'Movies and series from TMDB · Explore the collection')
@@ -553,10 +576,20 @@ async function loadCatalog(append = false, gallery = false) {
                 render();
             });
         } else {
-            render();
-            const response = await fetch('/catalog?' + params, {headers:{Accept:'application/json'},signal:requestController.signal});
-            if (!response.ok) throw new Error('Catalog unavailable');
-            data = await response.json();
+            const key = params.toString();
+            const cached = params.get('q') ? searchCache.get(key) : null;
+            if (cached?.expires > Date.now()) {
+                data = cached.data;
+            } else {
+                render();
+                const response = await fetch('/catalog?' + params, {headers:{Accept:'application/json'},signal:requestController.signal});
+                if (!response.ok) throw new Error('Catalog unavailable');
+                data = await response.json();
+                if (params.get('q') && data.source === 'tmdb' && Array.isArray(data.results) && !data.unavailable?.length) {
+                    if (searchCache.size >= 40) searchCache.delete(searchCache.keys().next().value);
+                    searchCache.set(key,{expires:Date.now() + 300000,data});
+                }
+            }
         }
         if (version !== requestVersion) return;
         if (data.source !== 'tmdb' || !Array.isArray(data.results)) throw new Error('Invalid response');
@@ -663,10 +696,13 @@ $('#search').addEventListener('input', event => {
     catalog = [];
     hasMore = false;
     render();
-    searchTimer = setTimeout(() => loadCatalog(), 350);
+    searchTimer = setTimeout(() => loadCatalog(), 250);
 });
 $('#load-more').addEventListener('click', () => loadCatalog(true));
-$('#catalog-retry').addEventListener('click', () => loadCatalog(!unavailableSources.length && catalogMode === 'tmdb' && catalogPage > 0));
+$('#catalog-retry').addEventListener('click', () => {
+    if (page === 'My list' && activeProfile) { syncWatchlist(activeProfile.id); updateSaveButtons(); render(); return; }
+    loadCatalog(!unavailableSources.length && catalogMode === 'tmdb' && catalogPage > 0);
+});
 renderProfiles();
 updateProfile();
 render();

@@ -2,6 +2,9 @@
 
 namespace Tests\Feature;
 
+use Closure;
+use Illuminate\Http\Client\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -30,7 +33,7 @@ class CatalogTest extends TestCase
             ->assertJsonPath('results.1.rating', '—')->assertJsonPath('has_more', true)
             ->assertDontSee('private-test-token');
         Http::assertSentCount(2);
-        Http::assertSent(fn (\Illuminate\Http\Client\Request $request): bool => $request->hasHeader('Authorization', 'Bearer private-test-token')
+        Http::assertSent(fn (Request $request): bool => $request->hasHeader('Authorization', 'Bearer private-test-token')
             && $request['include_adult'] === 'false');
         $this->get('/')->assertOk()->assertDontSee('private-test-token');
     }
@@ -46,6 +49,36 @@ class CatalogTest extends TestCase
         Http::assertSentCount(3);
     }
 
+    public function test_combined_search_reuses_cached_movies_when_only_series_need_loading(): void
+    {
+        Http::fake(['*' => Http::response(['results' => [], 'total_pages' => 1])]);
+        $this->getJson('/catalog?type=movie&q=Space')->assertOk();
+        Http::assertSentCount(1);
+        $this->getJson('/catalog?q=Space')->assertOk()->assertJsonPath('unavailable', []);
+        Http::assertSentCount(2);
+        Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/search/tv') && $request['query'] === 'Space');
+        $this->getJson('/catalog?q=Space')->assertOk();
+        Http::assertSentCount(2);
+    }
+
+    public function test_discovery_stays_cached_longer_while_searches_refresh_after_five_minutes(): void
+    {
+        Http::fake(['*' => Http::response(['results' => [$this->movie()], 'total_pages' => 1])]);
+        $this->getJson('/catalog?type=movie')->assertOk();
+        $this->getJson('/catalog?type=movie&q=Space')->assertOk();
+        Http::assertSentCount(2);
+
+        $this->travel(6)->minutes();
+        $this->getJson('/catalog?type=movie')->assertOk();
+        Http::assertSentCount(2);
+        $this->getJson('/catalog?type=movie&q=Space')->assertOk();
+        Http::assertSentCount(3);
+
+        $this->travel(25)->minutes();
+        $this->getJson('/catalog?type=movie')->assertOk();
+        Http::assertSentCount(4);
+    }
+
     public function test_search_filters_genres_adult_titles_and_unsafe_posters(): void
     {
         Http::fake(['*' => Http::response(['results' => [
@@ -55,14 +88,14 @@ class CatalogTest extends TestCase
         ], 'total_pages' => 1000])]);
         $this->getJson('/catalog?type=movie&q=Space&genre=Sci-Fi&page=500')->assertOk()
             ->assertJsonCount(2, 'results')->assertJsonPath('results.1.image', null)->assertJsonPath('has_more', false);
-        Http::assertSent(fn (\Illuminate\Http\Client\Request $request): bool => str_contains($request->url(), '/search/movie') && $request['query'] === 'Space');
+        Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/search/movie') && $request['query'] === 'Space');
     }
 
     public function test_tv_discovery_maps_genres_to_tmdb_tv_ids(): void
     {
         Http::fake(['*' => Http::response(['results' => [], 'total_pages' => 1])]);
         $this->getJson('/catalog?type=tv&genre=Action')->assertOk();
-        Http::assertSent(fn (\Illuminate\Http\Client\Request $request): bool => str_contains($request->url(), '/discover/tv') && $request['with_genres'] === 10759);
+        Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/discover/tv') && $request['with_genres'] === 10759);
     }
 
     public function test_new_movie_genres_and_tv_categories_are_classified_and_filterable(): void
@@ -77,12 +110,12 @@ class CatalogTest extends TestCase
         ]);
         $this->getJson('/catalog?type=movie&genre=Horror')->assertOk()
             ->assertJsonPath('results.0.genres', ['Horror', 'Romance', 'Fantasy']);
-        Http::assertSent(fn (\Illuminate\Http\Client\Request $request): bool => $request['with_genres'] === 27);
+        Http::assertSent(fn (Request $request): bool => $request['with_genres'] === 27);
         $this->getJson('/catalog?type=movie&genre=Romance')->assertOk()->assertJsonCount(1, 'results');
-        Http::assertSent(fn (\Illuminate\Http\Client\Request $request): bool => $request['with_genres'] === 10749);
+        Http::assertSent(fn (Request $request): bool => $request['with_genres'] === 10749);
         $this->getJson('/catalog?type=tv&genre=Fantasy')->assertOk()
             ->assertJsonPath('results.0.genres', ['Sci-Fi & Fantasy', 'Comedy']);
-        Http::assertSent(fn (\Illuminate\Http\Client\Request $request): bool => $request['with_genres'] === 10765);
+        Http::assertSent(fn (Request $request): bool => $request['with_genres'] === 10765);
         $this->getJson('/catalog?type=tv&genre=Horror')->assertOk()->assertJsonCount(0, 'results');
         Http::assertSentCount(3);
     }
@@ -101,9 +134,16 @@ class CatalogTest extends TestCase
 
     public function test_total_failure_does_not_fall_back_to_another_provider(): void
     {
-        Http::fake(['*' => Http::failedConnection()]);
+        $attemptedUrls = [];
+        Http::fake(function (Request $request) use (&$attemptedUrls): Closure {
+            $attemptedUrls[] = $request->url();
+
+            return Http::failedConnection();
+        });
         $this->getJson('/catalog')->assertStatus(503)->assertJsonPath('source', 'unavailable')->assertJsonPath('results', []);
-        Http::assertSentCount(2);
+        $this->assertCount(2, $attemptedUrls);
+        $this->assertStringContainsString('/discover/movie', $attemptedUrls[0]);
+        $this->assertStringContainsString('/discover/tv', $attemptedUrls[1]);
     }
 
     public function test_missing_token_and_invalid_inputs_make_no_requests(): void
@@ -123,7 +163,7 @@ class CatalogTest extends TestCase
 
     public function test_release_carousel_uses_now_playing_and_excludes_old_future_and_adult_movies(): void
     {
-        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-02 12:00:00'));
+        $this->travelTo(Carbon::parse('2026-11-02 12:00:00'));
         Http::fake(['api.themoviedb.org/3/movie/now_playing*' => Http::response(['results' => [
             [...$this->movie(), 'release_date' => '2026-10-20', 'backdrop_path' => '/backdrop.jpg'],
             [...$this->movie(), 'id' => 43, 'release_date' => '2026-11-03'],

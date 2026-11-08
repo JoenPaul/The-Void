@@ -6,6 +6,8 @@
     <meta name="theme-color" content="#09080d">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>The Void — Find your next obsession</title>
+    <link rel="preconnect" href="https://image.tmdb.org" crossorigin>
+    <link rel="dns-prefetch" href="https://cinesrc.st">
     <link rel="stylesheet" href="{{ asset('css/cinema.css') }}">
     <script src="{{ asset('js/cinema.js') }}" defer></script>
     <script src="{{ asset('js/profile-security.js') }}" defer></script>
