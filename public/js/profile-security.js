@@ -49,7 +49,17 @@ $('#change-pin-form').addEventListener('submit', async event => {
     finally { securityBusy = false; $('#save-pin').disabled = false; }
 });
 
+let adminMenuOpen = false;
+function setAdminMenu(open) {
+    adminMenuOpen = open;
+    $('#admin-workspace').setAttribute('data-menu-open', String(open));
+    $('#admin-menu-toggle').setAttribute('aria-expanded', String(open));
+}
+$('#admin-menu-toggle').addEventListener('click', () => setAdminMenu(!adminMenuOpen));
+
 function showAdminLogin() {
+    setAdminMenu(false);
+    $('#admin-menu-toggle').hidden = true;
     $('#superadmin-login').hidden = false;
     $('#admin-workspace').hidden = true;
     $('#admin-profile-rows').innerHTML = '';
@@ -83,6 +93,7 @@ $('#superadmin-login').addEventListener('submit', async event => {
         const result = await profileRequest('/superadmin/profiles');
         $('#superadmin-login').hidden = true;
         $('#admin-workspace').hidden = false;
+        $('#admin-menu-toggle').hidden = false;
         showAdminSection('profiles');
         renderAdminProfiles(result.profiles);
     } catch (error) { $('#admin-message').textContent = error.message; }
@@ -132,6 +143,9 @@ $('#admin-pin-form').addEventListener('submit', async event => {
 });
 
 function showAdminSection(section) {
+    if (adminMenuOpen) $('#admin-menu-toggle').focus();
+    setAdminMenu(false);
+    $('.admin-main').scrollTop = 0;
     $('#admin-accounts').hidden = section !== 'profiles';
     $('#admin-settings-panel').hidden = section !== 'settings';
     $('#admin-nav-profiles').setAttribute('aria-current',section === 'profiles' ? 'page' : 'false');

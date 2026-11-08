@@ -731,3 +731,21 @@ test('profile dropdown opens settings and only the active profile can be edited'
     app.run("resetProfileForm(); editProfile(profiles.find(profile => profile.id === 'guest'))");
     assert.equal(app.run('editingProfileId'),null);
 });
+
+test('admin navigation collapses the mobile menu and resets content scrolling', async () => {
+    const app = setup(async () => response([]));
+    await settle();
+    app.element('#admin-menu-toggle').listeners.click();
+    assert.equal(app.run('adminMenuOpen'),true);
+    app.element('.admin-main').scrollTop = 240;
+    app.element('#admin-nav-settings').listeners.click();
+    assert.equal(app.run('adminMenuOpen'),false);
+    assert.equal(app.element('#admin-settings-panel').hidden,false);
+    assert.equal(app.element('#admin-accounts').hidden,true);
+    assert.equal(app.element('.admin-main').scrollTop,0);
+    app.element('#admin-menu-toggle').listeners.click();
+    app.run('showAdminLogin()');
+    assert.equal(app.run('adminMenuOpen'),false);
+    assert.equal(app.element('#admin-menu-toggle').hidden,true);
+    assert.equal(app.element('#admin-workspace').hidden,true);
+});

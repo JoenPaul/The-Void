@@ -37,4 +37,46 @@ button,button *,summary,summary *{-webkit-user-select:none;user-select:none;care
 .admin-row-actions .admin-icon-action{display:grid;place-items:center;width:42px;height:42px;padding:0}.admin-action-tooltip{position:relative;display:inline-flex}.admin-action-tooltip::after{content:attr(data-tooltip);position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;padding:6px 9px;border:1px solid #594468;border-radius:6px;background:#251a30;color:#eee4fa;font-size:11px;pointer-events:none;opacity:0;z-index:30}.admin-action-tooltip:hover::after,.admin-action-tooltip:focus-within::after{opacity:1}.admin-icon-action:focus-visible{outline:2px solid #bb88ff;outline-offset:3px}
 .admin-sidebar .admin-signout{width:100%;min-height:46px;flex-shrink:0}
 
+#superadmin:has(#admin-workspace:not([hidden])){height:min(780px,94dvh);overflow:hidden}
+#superadmin[open]:has(#admin-workspace:not([hidden])){display:flex;flex-direction:column}
+#superadmin .admin-heading{flex-shrink:0}
+#superadmin .admin-heading>div{min-width:0;flex:1}
+#superadmin-close{position:static;flex-shrink:0;align-self:flex-start}
+#admin-menu-toggle{display:none}
+#admin-workspace{position:relative;flex:1;min-height:0;overflow:hidden}
+.admin-sidebar{min-height:0;overflow:hidden;gap:12px}
+.admin-main{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:8px}
+.admin-table-wrap table{min-width:600px}
+.admin-table-wrap td:first-child{overflow-wrap:anywhere}
+#admin-message{flex-shrink:0;font-size:13px;overflow-wrap:anywhere}
+#admin-message:empty{margin:0}
+
+@media(max-width:600px){
+    #superadmin{padding:18px}
+    #superadmin .admin-heading{gap:12px}
+    #superadmin .admin-heading .eyebrow{font-size:8px;letter-spacing:1.4px}
+    #superadmin-title{font-size:23px;margin-bottom:12px}
+    #admin-menu-toggle:not([hidden]){display:grid;place-items:center;width:42px;height:42px;padding:0;flex-shrink:0}
+    #admin-workspace{grid-template-columns:minmax(0,1fr);gap:0;padding-top:18px}
+    #admin-sidebar{display:none;position:absolute;inset:0 auto 0 0;width:min(230px,100%);padding:18px;background:var(--panel);z-index:2;border-right:1px solid var(--line);box-shadow:12px 0 28px #0008}
+    #admin-workspace[data-menu-open="true"] #admin-sidebar{display:flex}
+    .admin-sidebar .admin-nav-button{padding:13px 14px;font-size:14px;min-height:44px}
+    .admin-main{padding-right:0;scrollbar-gutter:auto}
+    .admin-main h3{font-size:22px}
+    .admin-table-wrap{overflow:visible}
+    .admin-table-wrap table{min-width:0}
+    .admin-table-wrap thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+    .admin-table-wrap tbody{display:grid;gap:14px}
+    .admin-table-wrap tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px;border:1px solid var(--line);border-radius:12px;background:#ffffff03}
+    .admin-table-wrap td{display:block;min-width:0;padding:0;border:0;overflow-wrap:anywhere;line-height:1.6}
+    .admin-table-wrap td:first-child,.admin-table-wrap td:last-child{grid-column:1/-1}
+    .admin-table-wrap td::before{display:block;margin-bottom:6px;color:#a89bb6;font-size:10px;letter-spacing:1px;text-transform:uppercase}
+    .admin-table-wrap td:nth-child(2)::before{content:'Date created'}
+    .admin-table-wrap td:nth-child(3)::before{content:'Status'}
+    .admin-table-wrap td:nth-child(4)::before{content:'Actions'}
+    .admin-avatar{vertical-align:middle}
+    .admin-row-actions{gap:12px}
+    .admin-row-actions .admin-icon-action{width:44px;height:44px}
+}
+
 dialog .secondary{background:transparent}dialog .secondary:hover:not(:disabled){background:#ffffff0a}dialog .primary{background:var(--violet);color:#fff;border:1px solid var(--violet)}dialog .primary:hover:not(:disabled){background:#ad79ff;border-color:#ad79ff}
