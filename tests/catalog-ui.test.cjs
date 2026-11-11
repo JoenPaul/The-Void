@@ -570,12 +570,14 @@ test('episode tiles count releases, resume an aired episode, and explain upcomin
     assert.equal(app.element('#episode-count').textContent,'1 of 3 episodes released');
     assert.match(app.element('#episode-tiles').innerHTML,/&lt;Pilot&gt;|Not yet available/);
     assert.match(app.element('#player-frame').innerHTML,/e=1.*t=45/);
-    const player = app.element('#player-frame').innerHTML;
     app.run('playSelectedEpisode(2)');
-    assert.match(app.element('#episode-message').textContent,/Episode not yet available.*2099-01-01/);
-    assert.equal(app.element('#player-frame').innerHTML,player);
+    assert.match(app.element('#episode-message').textContent,/Episode not yet available/);
+    assert.match(app.element('#player-frame').innerHTML,/Episode not yet available/);
+    assert.doesNotMatch(app.element('#player-frame').innerHTML,/<iframe/);
     app.run('playSelectedEpisode(3)');
-    assert.match(app.element('#episode-message').textContent,/not been announced/);
+    assert.match(app.element('#player-status').textContent,/Episode not yet available/);
+    app.run('playSelectedEpisode(1)');
+    assert.match(app.element('#player-frame').innerHTML,/<iframe/);
 });
 
 test('unreleased seasons never mount a player and failed episode feeds offer retry', async () => {

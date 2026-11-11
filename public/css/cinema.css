@@ -80,3 +80,4 @@ button,button *,summary,summary *{-webkit-user-select:none;user-select:none;care
 }
 
 dialog .secondary{background:transparent}dialog .secondary:hover:not(:disabled){background:#ffffff0a}dialog .primary{background:var(--violet);color:#fff;border:1px solid var(--violet)}dialog .primary:hover:not(:disabled){background:#ad79ff;border-color:#ad79ff}
+#player-frame > [role="status"]{display:grid;place-items:center;min-height:100%;aspect-ratio:16/9;margin:0;padding:24px;text-align:center;color:var(--muted)}

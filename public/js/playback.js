@@ -126,7 +126,14 @@ function playSelectedEpisode(number, progress) {
     const episode = seasonEpisodes.find(item => item.number === number);
     if (!episode || playbackData?.type !== 'tv') return;
     if (!episode.released) {
-        $('#episode-message').textContent = 'Episode not yet available. ' + (episode.air_date ? 'Scheduled for ' + episode.air_date + '.' : 'A release date has not been announced.');
+        persistPlaybackProgress(false,true);
+        latestPlaybackTime = null;
+        playbackStarted = false;
+        playbackEpisode = episode.number;
+        renderEpisodeTiles();
+        $('#player-frame').innerHTML = '<p role="status">Episode not yet available.</p>';
+        $('#player-status').textContent = 'Episode not yet available.';
+        $('#episode-message').textContent = 'Episode not yet available. Please check back later.';
         return;
     }
     persistPlaybackProgress(false,true);

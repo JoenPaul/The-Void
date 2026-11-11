@@ -95,17 +95,20 @@ class PlaybackTest extends TestCase
     {
         $this->travelTo(now('UTC')->setDate(2026, 11, 2)->startOfDay());
         Http::fake(['api.themoviedb.org/3/tv/42/season/1' => Http::response(['episodes' => [
-            ['episode_number' => 1, 'name' => 'Pilot', 'air_date' => '2026-10-26'],
-            ['episode_number' => 2, 'name' => 'Today', 'air_date' => '2026-11-02'],
-            ['episode_number' => 3, 'name' => 'Next', 'air_date' => '2026-11-03'],
+            ['episode_number' => 1, 'name' => 'Pilot', 'air_date' => '2026-10-26', 'overview' => 'The story begins.'],
+            ['episode_number' => 2, 'name' => 'Today', 'air_date' => '2026-11-02', 'overview' => 'The story continues.'],
+            ['episode_number' => 3, 'name' => 'Next', 'air_date' => '2026-11-03', 'overview' => 'The next chapter.'],
             ['episode_number' => 4, 'name' => 'Unknown', 'air_date' => null],
             ['episode_number' => 5, 'air_date' => '2026-99-01'],
+            ['episode_number' => 6, 'air_date' => '2026-10-26', 'overview' => '   '],
+            ['episode_number' => 7, 'air_date' => '2026-10-26'],
             ['episode_number' => -1, 'name' => 'Invalid'],
         ]])]);
-        $this->getJson('/playback/tv/42/season/1')->assertOk()->assertJsonCount(5, 'episodes')
+        $this->getJson('/playback/tv/42/season/1')->assertOk()->assertJsonCount(7, 'episodes')
             ->assertJsonPath('released_count', 2)->assertJsonPath('episodes.0.released', true)
             ->assertJsonPath('episodes.1.released', true)->assertJsonPath('episodes.2.released', false)
             ->assertJsonPath('episodes.3.air_date', null)->assertJsonPath('episodes.4.released', false)
+            ->assertJsonPath('episodes.5.released', false)->assertJsonPath('episodes.6.released', false)
             ->assertDontSee('private-test-token');
         $this->travelTo(now('UTC')->addDay());
         $this->getJson('/playback/tv/42/season/1')->assertOk()->assertJsonPath('released_count', 3);

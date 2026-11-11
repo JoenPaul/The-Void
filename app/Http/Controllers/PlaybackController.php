@@ -37,7 +37,8 @@ class PlaybackController extends Controller
                     && checkdate((int) substr($date, 5, 2), (int) substr($date, 8, 2), (int) substr($date, 0, 4));
                 $episodes[$episode['episode_number']] = [
                     'number' => $episode['episode_number'], 'name' => ($episode['name'] ?? '') ?: 'Episode '.$episode['episode_number'],
-                    'air_date' => $hasDate ? $date : null, 'released' => $hasDate && $date <= $today,
+                    'air_date' => $hasDate ? $date : null, 'released' => $hasDate && $date <= $today
+                        && is_string($episode['overview'] ?? null) && trim($episode['overview']) !== '',
                 ];
             }
             ksort($episodes);
