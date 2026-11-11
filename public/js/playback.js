@@ -83,7 +83,7 @@ async function loadSeasonEpisodes(progress = null, autoPlay = false) {
     latestPlaybackTime = null;
     playbackStarted = false;
     $('#player-frame').innerHTML = '';
-    $('#player-status').textContent = 'Choose a released episode below.';
+    $('#player-status').textContent = 'Choose an episode below.';
     $('#episode-count').textContent = 'Loading episodes…';
     $('#episode-message').textContent = '';
     $('#episode-tiles').innerHTML = '';
@@ -95,17 +95,15 @@ async function loadSeasonEpisodes(progress = null, autoPlay = false) {
         const data = await response.json();
         if (version !== episodeRequestVersion || playerVersion !== playbackVersion) return false;
         if (data.season !== season.number || !Array.isArray(data.episodes) || data.episodes.length > 5000
-            || data.episodes.some(episode => !Number.isInteger(episode.number) || episode.number < 1 || episode.number > 5000 || typeof episode.released !== 'boolean')) throw new Error('Invalid episodes');
+            || data.episodes.some(episode => !Number.isInteger(episode.number) || episode.number < 1 || episode.number > 5000)) throw new Error('Invalid episodes');
         seasonEpisodes = data.episodes;
-        const available = seasonEpisodes.filter(episode => episode.released);
-        $('#episode-count').textContent = `${available.length} of ${seasonEpisodes.length} episodes released`;
+        $('#episode-count').textContent = `${seasonEpisodes.length} listed`;
         renderEpisodeTiles();
-        if (autoPlay && available.length) {
-            const resume = progress?.season === season.number && available.find(episode => episode.number === progress.episode);
-            playSelectedEpisode(resume ? resume.number : available[0].number,progress);
-        } else if (!available.length) {
-            $('#player-status').textContent = 'No episodes are available yet for this season.';
-            $('#episode-message').textContent = 'Episode not yet available. Check back after its release date.';
+        if (autoPlay && seasonEpisodes.length) {
+            const resume = progress?.season === season.number && seasonEpisodes.find(episode => episode.number === progress.episode);
+            playSelectedEpisode(resume ? resume.number : seasonEpisodes[0].number,progress);
+        } else if (!seasonEpisodes.length) {
+            $('#player-status').textContent = 'No episodes are listed for this season.';
         }
         return true;
     } catch (error) {
@@ -119,23 +117,12 @@ async function loadSeasonEpisodes(progress = null, autoPlay = false) {
     }
 }
 function renderEpisodeTiles() {
-    $('#episode-tiles').innerHTML = seasonEpisodes.map(episode => `<button class="episode-tile${episode.released ? '' : ' episode-upcoming'}" data-episode="${episode.number}" aria-pressed="${episode.number === playbackEpisode}"><span class="episode-number">Episode ${episode.number}</span><strong>${escapeHtml(episode.name || 'Episode ' + episode.number)}</strong><span class="episode-release">${episode.released ? 'Released' : 'Not yet available'}${episode.air_date ? ' · ' + escapeHtml(episode.air_date) : ' · Release date not announced'}</span></button>`).join('');
+    $('#episode-tiles').innerHTML = seasonEpisodes.map(episode => `<button class="episode-tile" data-episode="${episode.number}" aria-pressed="${episode.number === playbackEpisode}"><span class="episode-number">Episode ${episode.number}</span><strong>${escapeHtml(episode.name || 'Episode ' + episode.number)}</strong><span class="episode-release">${episode.air_date ? 'Scheduled · ' + escapeHtml(episode.air_date) : 'Release date not announced'}</span></button>`).join('');
     $('#episode-tiles').querySelectorAll('[data-episode]').forEach(button => button.addEventListener('click', () => playSelectedEpisode(Number(button.dataset.episode),playbackProgress()[playerProgressKey()])));
 }
 function playSelectedEpisode(number, progress) {
     const episode = seasonEpisodes.find(item => item.number === number);
     if (!episode || playbackData?.type !== 'tv') return;
-    if (!episode.released) {
-        persistPlaybackProgress(false,true);
-        latestPlaybackTime = null;
-        playbackStarted = false;
-        playbackEpisode = episode.number;
-        renderEpisodeTiles();
-        $('#player-frame').innerHTML = '<p role="status">Episode not yet available.</p>';
-        $('#player-status').textContent = 'Episode not yet available.';
-        $('#episode-message').textContent = 'Episode not yet available. Please check back later.';
-        return;
-    }
     persistPlaybackProgress(false,true);
     playbackEpisode = episode.number;
     $('#episode-message').textContent = '';
@@ -151,7 +138,7 @@ async function navigatePlayerEpisode(season, episode) {
         if (!await loadSeasonEpisodes()) return;
     }
     if (version !== playbackVersion || season !== playbackSeason) return;
-    if (!seasonEpisodes.some(item => item.number === episode && item.released)) {
+    if (!seasonEpisodes.some(item => item.number === episode)) {
         $('#player-frame').innerHTML = '';
         latestPlaybackTime = null;
         playbackStarted = false;
@@ -162,7 +149,7 @@ function mountPlayer(progress) {
     if (!playbackData) return;
     if (playbackData.type === 'tv') {
         playbackSeason = Number($('#player-season').value);
-        if (!selectedSeason() || !seasonEpisodes.some(episode => episode.number === playbackEpisode && episode.released)) return;
+        if (!selectedSeason() || !seasonEpisodes.some(episode => episode.number === playbackEpisode)) return;
     }
     const url = new URL(playerOrigin + '/embed/' + playbackData.type + '/' + playbackData.id);
     url.searchParams.set('color', '#9959ff');

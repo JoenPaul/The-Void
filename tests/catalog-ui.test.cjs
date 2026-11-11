@@ -557,7 +557,7 @@ function seriesPlayer(fetchSeason) {
 }
 const seasonResponse = (season,episodes) => ({ok:true,json:async () => ({season,episodes})});
 
-test('episode tiles count releases, resume an aired episode, and explain upcoming episodes without playing them', async () => {
+test('episode tiles resume playback and let CineSrc handle availability', async () => {
     const app = seriesPlayer(async () => seasonResponse(1,[
         {number:1,name:'<Pilot>',air_date:'2026-01-01',released:true},
         {number:2,name:'Soon',air_date:'2099-01-01',released:false},
@@ -567,28 +567,26 @@ test('episode tiles count releases, resume an aired episode, and explain upcomin
     await signInRememberedProfile(app);
     app.storage.set('void.playback.v1',JSON.stringify({'joen:tv:42':{season:1,episode:1,position:45,duration:1000}}));
     await app.run("openPlayer('tv:42')");
-    assert.equal(app.element('#episode-count').textContent,'1 of 3 episodes released');
-    assert.match(app.element('#episode-tiles').innerHTML,/&lt;Pilot&gt;|Not yet available/);
+    assert.equal(app.element('#episode-count').textContent,'3 listed');
+    assert.match(app.element('#episode-tiles').innerHTML,/&lt;Pilot&gt;/);
     assert.match(app.element('#player-frame').innerHTML,/e=1.*t=45/);
     app.run('playSelectedEpisode(2)');
-    assert.match(app.element('#episode-message').textContent,/Episode not yet available/);
-    assert.match(app.element('#player-frame').innerHTML,/Episode not yet available/);
-    assert.doesNotMatch(app.element('#player-frame').innerHTML,/<iframe/);
+    assert.match(app.element('#player-frame').innerHTML,/e=2/);
     app.run('playSelectedEpisode(3)');
-    assert.match(app.element('#player-status').textContent,/Episode not yet available/);
+    assert.match(app.element('#player-frame').innerHTML,/e=3/);
     app.run('playSelectedEpisode(1)');
     assert.match(app.element('#player-frame').innerHTML,/<iframe/);
 });
 
-test('unreleased seasons never mount a player and failed episode feeds offer retry', async () => {
+test('empty seasons never mount a player and failed episode feeds offer retry', async () => {
     let failed = false;
-    const app = seriesPlayer(async () => failed ? {ok:false} : seasonResponse(1,[{number:1,name:'Upcoming',air_date:'2099-01-01',released:false}]));
+    const app = seriesPlayer(async () => failed ? {ok:false} : seasonResponse(1,[]));
     await settle();
     await signInRememberedProfile(app);
     await app.run("openPlayer('tv:42')");
-    assert.equal(app.element('#episode-count').textContent,'0 of 1 episodes released');
+    assert.equal(app.element('#episode-count').textContent,'0 listed');
     assert.equal(app.element('#player-frame').innerHTML,'');
-    assert.match(app.element('#episode-message').textContent,/not yet available/);
+    assert.match(app.element('#player-status').textContent,/No episodes are listed/);
     failed = true;
     await app.run('loadSeasonEpisodes()');
     assert.equal(app.element('#retry-episodes').hidden,false);
