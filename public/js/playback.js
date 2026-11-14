@@ -3,6 +3,13 @@ let playbackVersion = 0, playbackController, playbackTitle, playbackData, playba
 let playbackSeason = 1, playbackEpisode = 1, lastProgressWrite = 0, latestPlaybackTime = null;
 let playbackStarted = false, lastHistoryWrite = 0;
 let episodeRequestVersion = 0, episodeController, seasonEpisodes = [];
+let activeParty = null, partyPollTimer = null, pendingPartyCode = null, applyingPartyState = false, partyBusy = false;
+
+try {
+    const partyParam = new URLSearchParams(window.location?.search || '').get('party');
+    if (partyParam && /^[A-Za-z0-9]{6,24}$/.test(partyParam)) pendingPartyCode = partyParam;
+} catch {}
+
 const playbackProgress = () => {
     const progress = read('void.playback.v1', {});
     return progress && typeof progress === 'object' && !Array.isArray(progress) ? progress : {};
@@ -19,7 +26,12 @@ function closePlayer() {
     playbackData = null;
     seasonEpisodes = [];
 }
-async function openPlayer(id) {
+async function openPlayer(id, partyProgress = null) {
+    if (activeParty && !activeParty.is_host && !applyingPartyState && id !== activeParty.title_key) {
+        notify('Only the watch party admin can change the movie. Leave the party first to watch on your own.');
+        if (!$('#player').open) $('#player').showModal();
+        return;
+    }
     const movie = titleIndex.get(id);
     if (!movie || !activeProfile || !profilesReady) return;
     persistPlaybackProgress(false, true);
@@ -37,12 +49,15 @@ async function openPlayer(id) {
     $('#player-frame').innerHTML = '';
     $('#episode-controls').hidden = true;
     $('#retry-player').hidden = true;
+    renderPartyBar();
     if ($('#details').open) $('#details').close();
     if (!$('#player').open) $('#player').showModal();
     try {
+        const resumeProgress = partyProgress || playbackProgress()[playerProgressKey()];
         if (/^movie:[1-9][0-9]{0,9}$/.test(id)) {
             playbackData = {type:'movie',id:id.slice(6),seasons:[]};
-            mountPlayer(playbackProgress()[playerProgressKey()]);
+            mountPlayer(resumeProgress);
+            if (activeParty?.is_host && !applyingPartyState) await pushPartyState(0, false);
             return;
         }
         const response = await fetch('/playback/' + encodeURIComponent(id), {headers:{Accept:'application/json'},signal:playbackController.signal});
@@ -51,16 +66,17 @@ async function openPlayer(id) {
         if (version !== playbackVersion) return;
         if (!['movie','tv'].includes(data.type) || !/^[1-9][0-9]{0,9}$/.test(String(data.id)) || !Array.isArray(data.seasons)) throw new Error('Invalid playback response');
         playbackData = data;
-        const savedProgress = playbackProgress()[playerProgressKey()];
         if (data.type === 'tv') {
             if (!data.seasons.length || data.seasons.some(season => !Number.isInteger(season.number) || season.number < 0 || !Number.isInteger(season.episodes) || season.episodes < 1 || season.episodes > 5000)) throw new Error('Invalid seasons');
             $('#player-season').innerHTML = data.seasons.map(season => `<option value="${season.number}">${escapeHtml(season.name)}</option>`).join('');
-            playbackSeason = data.seasons.some(season => season.number === savedProgress?.season) ? savedProgress.season : (data.seasons.find(season => season.number > 0) || data.seasons[0]).number;
+            playbackSeason = data.seasons.some(season => season.number === resumeProgress?.season) ? resumeProgress.season : (data.seasons.find(season => season.number > 0) || data.seasons[0]).number;
             $('#player-season').value = String(playbackSeason);
             $('#episode-controls').hidden = false;
-            await loadSeasonEpisodes(savedProgress,true);
+            renderPartyBar();
+            await loadSeasonEpisodes(resumeProgress,true);
         } else {
-            mountPlayer(savedProgress);
+            mountPlayer(resumeProgress);
+            if (activeParty?.is_host && !applyingPartyState) await pushPartyState(0, false);
         }
     } catch (error) {
         if (version !== playbackVersion || error.name === 'AbortError') return;
@@ -101,7 +117,7 @@ async function loadSeasonEpisodes(progress = null, autoPlay = false) {
         renderEpisodeTiles();
         if (autoPlay && seasonEpisodes.length) {
             const resume = progress?.season === season.number && seasonEpisodes.find(episode => episode.number === progress.episode);
-            playSelectedEpisode(resume ? resume.number : seasonEpisodes[0].number,progress);
+            playSelectedEpisode(resume ? resume.number : seasonEpisodes[0].number,progress, true);
         } else if (!seasonEpisodes.length) {
             $('#player-status').textContent = 'No episodes are listed for this season.';
         }
@@ -117,10 +133,15 @@ async function loadSeasonEpisodes(progress = null, autoPlay = false) {
     }
 }
 function renderEpisodeTiles() {
-    $('#episode-tiles').innerHTML = seasonEpisodes.map(episode => `<button class="episode-tile" data-episode="${episode.number}" aria-pressed="${episode.number === playbackEpisode}"><span class="episode-number">Episode ${episode.number}</span><strong>${escapeHtml(episode.name || 'Episode ' + episode.number)}</strong><span class="episode-release">${episode.air_date ? 'Scheduled · ' + escapeHtml(episode.air_date) : 'Release date not announced'}</span></button>`).join('');
+    const locked = Boolean(activeParty && !activeParty.is_host);
+    $('#episode-tiles').innerHTML = seasonEpisodes.map(episode => `<button class="episode-tile" data-episode="${episode.number}" aria-pressed="${episode.number === playbackEpisode}" ${locked ? 'disabled' : ''}><span class="episode-number">Episode ${episode.number}</span><strong>${escapeHtml(episode.name || 'Episode ' + episode.number)}</strong><span class="episode-release">${episode.air_date ? 'Scheduled · ' + escapeHtml(episode.air_date) : 'Release date not announced'}</span></button>`).join('');
     $('#episode-tiles').querySelectorAll('[data-episode]').forEach(button => button.addEventListener('click', () => playSelectedEpisode(Number(button.dataset.episode),playbackProgress()[playerProgressKey()])));
 }
-function playSelectedEpisode(number, progress) {
+function playSelectedEpisode(number, progress, internalCall = false) {
+    if (activeParty && !activeParty.is_host && !applyingPartyState && !internalCall) {
+        notify('Only the watch party admin can change the episode.');
+        return;
+    }
     const episode = seasonEpisodes.find(item => item.number === number);
     if (!episode || playbackData?.type !== 'tv') return;
     persistPlaybackProgress(false,true);
@@ -128,8 +149,12 @@ function playSelectedEpisode(number, progress) {
     $('#episode-message').textContent = '';
     renderEpisodeTiles();
     mountPlayer(progress);
+    if (activeParty?.is_host && !applyingPartyState) {
+        pushPartyState(progress?.season === playbackSeason && progress?.episode === playbackEpisode ? Math.floor(progress?.position || 0) : 0, false);
+    }
 }
 async function navigatePlayerEpisode(season, episode) {
+    if (activeParty && !activeParty.is_host && !applyingPartyState) return;
     if (!playbackData.seasons.some(item => item.number === season) || !Number.isInteger(episode)) return;
     const version = playbackVersion;
     persistPlaybackProgress(false,true);
@@ -143,7 +168,7 @@ async function navigatePlayerEpisode(season, episode) {
         latestPlaybackTime = null;
         playbackStarted = false;
     }
-    playSelectedEpisode(episode);
+    playSelectedEpisode(episode, undefined, true);
 }
 function mountPlayer(progress) {
     if (!playbackData) return;
@@ -161,13 +186,17 @@ function mountPlayer(progress) {
         url.searchParams.set('e', String(playbackEpisode));
     }
     const sameEpisode = playbackData.type === 'movie' || (progress?.season === playbackSeason && progress?.episode === playbackEpisode);
-    if (sameEpisode && Number.isFinite(progress?.position) && progress.position > 10 && progress.position < 604800) url.searchParams.set('t', String(Math.floor(progress.position)));
-    latestPlaybackTime = null;
+    const minPosition = activeParty && !activeParty.is_host ? 0 : 10;
+    if (sameEpisode && Number.isFinite(progress?.position) && progress.position > minPosition && progress.position < 604800) url.searchParams.set('t', String(Math.floor(progress.position)));
+    latestPlaybackTime = sameEpisode && Number.isFinite(progress?.position) && progress.position > 0 ? {position:Math.floor(progress.position), duration:progress.duration || 0} : null;
     lastProgressWrite = 0;
     playbackStarted = false;
     lastHistoryWrite = 0;
     $('#player-frame').innerHTML = `<iframe id="cinesrc-player" src="${escapeHtml(url.href)}" title="${escapeHtml(playbackTitle.title)} video player" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>`;
-    $('#player-status').textContent = 'Press play in the player. If a source fails, try another server inside the player.';
+    $('#player-status').textContent = activeParty && !activeParty.is_host
+        ? `Synced with ${activeParty.host_name}’s watch party · Press play in the player.`
+        : 'Press play in the player. If a source fails, try another server inside the player.';
+    renderPartyBar();
 }
 function handlePlayerMessage(event) {
     const iframe = $('#cinesrc-player');
@@ -175,8 +204,13 @@ function handlePlayerMessage(event) {
     const data = event.data;
     if (data.type === 'cinesrc:close') { closePlayer(); return; }
     if (data.type === 'cinesrc:error') { $('#player-status').textContent = 'The provider couldn’t play this source. Try another server inside the player.'; return; }
-    if (data.type === 'cinesrc:play') { playbackStarted = true; $('#player-status').textContent = 'Now playing · CineSrc'; }
+    if (data.type === 'cinesrc:play') {
+        playbackStarted = true;
+        $('#player-status').textContent = 'Now playing · CineSrc';
+        if (activeParty?.is_host) pushPartyState(Math.floor(latestPlaybackTime?.position || 0), true);
+    }
     if (data.type === 'cinesrc:nextepisode' && playbackData.type === 'tv') {
+        if (activeParty && !activeParty.is_host) return;
         navigatePlayerEpisode(data.season,data.episode);
         return;
     }
@@ -184,17 +218,23 @@ function handlePlayerMessage(event) {
         latestPlaybackTime = {position:data.currentTime, duration:data.duration};
     }
     if (!latestPlaybackTime || !['cinesrc:timeupdate','cinesrc:pause','cinesrc:seeked','cinesrc:ended'].includes(data.type)) return;
+    if (activeParty?.is_host && ['cinesrc:pause','cinesrc:seeked','cinesrc:ended'].includes(data.type)) {
+        pushPartyState(Math.floor(latestPlaybackTime.position), data.type === 'cinesrc:seeked' && playbackStarted);
+    }
     if (data.type === 'cinesrc:timeupdate' && Date.now() - lastProgressWrite < 10000) return;
     persistPlaybackProgress(data.type === 'cinesrc:ended', data.type !== 'cinesrc:timeupdate');
+    if (activeParty?.is_host && data.type === 'cinesrc:timeupdate') {
+        pushPartyState(Math.floor(latestPlaybackTime.position), playbackStarted);
+    }
 }
 function persistPlaybackProgress(ended = false, syncHistory = false) {
     if (!playbackData || !latestPlaybackTime) return;
     const progress = playbackProgress();
-    const finished = ended || latestPlaybackTime.position / latestPlaybackTime.duration > .95;
+    const finished = ended || (latestPlaybackTime.duration > 0 && latestPlaybackTime.position / latestPlaybackTime.duration > .95);
     progress[playerProgressKey()] = {...latestPlaybackTime,position:finished ? 0 : latestPlaybackTime.position,season:playbackSeason,episode:playbackEpisode,updatedAt:Date.now()};
     write('void.playback.v1', progress);
     lastProgressWrite = Date.now();
-    if (playbackStarted && latestPlaybackTime.position >= 5 && typeof queueWatchHistory === 'function' && (syncHistory || Date.now() - lastHistoryWrite >= 30000)) {
+    if (playbackStarted && latestPlaybackTime.position >= 5 && latestPlaybackTime.duration >= 5 && typeof queueWatchHistory === 'function' && (syncHistory || Date.now() - lastHistoryWrite >= 30000)) {
         lastHistoryWrite = Date.now();
         queueWatchHistory(playbackProfileId, playbackTitle, {
             position:Math.min(Math.floor(latestPlaybackTime.position),Math.floor(latestPlaybackTime.duration)), duration:Math.floor(latestPlaybackTime.duration),
@@ -202,10 +242,221 @@ function persistPlaybackProgress(ended = false, syncHistory = false) {
         });
     }
 }
+
+function partyInviteUrl(code) {
+    const origin = window.location?.origin || 'https://the-void.local';
+    const path = window.location?.pathname || '/';
+    return origin + path + '?party=' + encodeURIComponent(code);
+}
+function partyStatePayload(positionOverride = null, isPlayingOverride = null) {
+    if (!playbackTitle) return null;
+    const isSeries = playbackTitle.type === 'Series' || playbackData?.type === 'tv';
+    const pos = positionOverride !== null ? positionOverride : Math.floor(latestPlaybackTime?.position || 0);
+    return {
+        title_key: playbackTitle.id,
+        ...titlePayload(playbackTitle),
+        type: isSeries ? 'Series' : 'Movies',
+        season: isSeries ? Number(playbackSeason || 1) : null,
+        episode: isSeries ? Number(playbackEpisode || 1) : null,
+        position: Math.max(0, Math.min(604800, pos)),
+        is_playing: isPlayingOverride !== null ? Boolean(isPlayingOverride) : Boolean(playbackStarted),
+    };
+}
+function renderPartyBar() {
+    const locked = Boolean(activeParty && !activeParty.is_host);
+    $('#player-season').disabled = locked;
+    if (!activeParty) {
+        $('#party-bar').hidden = true;
+        $('#party-start').hidden = false;
+        $('#party-start').disabled = partyBusy;
+        return;
+    }
+    const isHost = Boolean(activeParty.is_host);
+    const members = Array.isArray(activeParty.members) ? activeParty.members : [];
+    $('#party-start').hidden = true;
+    $('#party-bar').hidden = false;
+    $('#party-role-badge').textContent = isHost ? 'ADMIN · HOST' : 'GUEST · LOCKED';
+    $('#party-summary').textContent = isHost
+        ? `Room ${activeParty.code} · Only you can change or control the movie.`
+        : `Hosted by ${activeParty.host_name} · Only the host can change or manipulate the movie.`;
+    $('#party-members').textContent = `${members.length || 1} watching`;
+    $('#party-sync').hidden = isHost;
+    $('#party-end').textContent = isHost ? 'End party' : 'Leave party';
+}
+async function copyPartyInviteLink() {
+    if (!activeParty) return;
+    const link = partyInviteUrl(activeParty.code);
+    try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(link);
+            notify('Invite link copied: ' + link);
+            return;
+        }
+    } catch {}
+    notify('Share this invite link: ' + link);
+}
+function stopPartyPolling() {
+    if (partyPollTimer) {
+        clearTimeout(partyPollTimer);
+        partyPollTimer = null;
+    }
+}
+function schedulePartyPoll() {
+    stopPartyPolling();
+    if (!activeParty) return;
+    partyPollTimer = setTimeout(async () => {
+        await pollWatchParty();
+        if (activeParty) schedulePartyPoll();
+    }, 4000);
+}
+async function startWatchParty() {
+    if (partyBusy || !activeProfile || !playbackTitle || !playbackData) return;
+    if (playbackData.type === 'tv' && !playbackEpisode) {
+        notify('Select an episode before starting a watch party.');
+        return;
+    }
+    partyBusy = true;
+    renderPartyBar();
+    try {
+        const result = await profileRequest('/party', 'POST', partyStatePayload());
+        activeParty = result.party;
+        renderPartyBar();
+        renderEpisodeTiles();
+        schedulePartyPoll();
+        await copyPartyInviteLink();
+    } catch (error) {
+        notify(error.message);
+    } finally {
+        partyBusy = false;
+        renderPartyBar();
+    }
+}
+async function pushPartyState(positionOverride = null, isPlayingOverride = null) {
+    if (!activeParty || !activeParty.is_host || !playbackTitle) return;
+    const payload = partyStatePayload(positionOverride, isPlayingOverride);
+    if (!payload) return;
+    try {
+        const result = await profileRequest('/party/' + encodeURIComponent(activeParty.code), 'PUT', payload);
+        if (activeParty?.code === result.party?.code) {
+            activeParty = result.party;
+            renderPartyBar();
+        }
+    } catch (error) {
+        notify(error.message);
+    }
+}
+async function applyPartyToGuestPlayer(party, forceRemount = false) {
+    if (!party?.title || typeof party.title.id !== 'string') return;
+    titleIndex.set(party.title.id, party.title);
+    const targetProgress = {
+        position: Number(party.position || 0),
+        season: party.season ?? 1,
+        episode: party.episode ?? 1,
+    };
+    const titleChanged = !playbackTitle || playbackTitle.id !== party.title_key || !playbackData;
+    const episodeChanged = party.title.type === 'Series' && (playbackSeason !== party.season || playbackEpisode !== party.episode);
+    const localPosition = latestPlaybackTime?.position ?? null;
+    const drifted = localPosition !== null && Math.abs(localPosition - targetProgress.position) > 15;
+
+    if (!titleChanged && !episodeChanged && !forceRemount && !drifted) {
+        if (!$('#player').open) $('#player').showModal();
+        return;
+    }
+    applyingPartyState = true;
+    try {
+        if (titleChanged) {
+            await openPlayer(party.title_key, targetProgress);
+        } else if (episodeChanged && playbackData?.type === 'tv') {
+            await navigatePlayerEpisode(party.season, party.episode);
+            mountPlayer(targetProgress);
+        } else {
+            mountPlayer(targetProgress);
+        }
+    } finally {
+        applyingPartyState = false;
+        renderPartyBar();
+        renderEpisodeTiles();
+    }
+}
+async function joinWatchParty(code) {
+    if (!activeProfile || !profilesReady || partyBusy) return false;
+    partyBusy = true;
+    try {
+        const result = await profileRequest('/party/' + encodeURIComponent(code), 'GET');
+        activeParty = result.party;
+        renderPartyBar();
+        await applyPartyToGuestPlayer(activeParty, true);
+        schedulePartyPoll();
+        notify(activeParty.is_host ? 'Reconnected to your watch party.' : `Joined ${activeParty.host_name}’s watch party.`);
+        return true;
+    } catch (error) {
+        notify(error.message);
+        return false;
+    } finally {
+        partyBusy = false;
+        renderPartyBar();
+    }
+}
+async function pollWatchParty(forceSync = false) {
+    if (!activeParty || !activeProfile) return;
+    const code = activeParty.code;
+    try {
+        const result = await profileRequest('/party/' + encodeURIComponent(code), 'GET');
+        if (!activeParty || activeParty.code !== code) return;
+        activeParty = result.party;
+        renderPartyBar();
+        if (!activeParty.is_host) {
+            await applyPartyToGuestPlayer(activeParty, forceSync);
+        }
+    } catch (error) {
+        if (/ended|not exist/i.test(error.message)) {
+            stopPartyPolling();
+            activeParty = null;
+            renderPartyBar();
+            renderEpisodeTiles();
+            notify('The watch party has ended.');
+        }
+    }
+}
+async function leaveWatchParty(silent = false) {
+    if (!activeParty) return;
+    const party = activeParty;
+    stopPartyPolling();
+    activeParty = null;
+    renderPartyBar();
+    renderEpisodeTiles();
+    try {
+        await profileRequest('/party/' + encodeURIComponent(party.code), 'DELETE');
+        if (!silent) {
+            notify(party.is_host ? 'Watch party ended for everyone.' : 'You left the watch party.');
+        }
+    } catch (error) {
+        if (!silent) notify(error.message);
+    }
+}
+async function enterPendingWatchParty() {
+    if (!pendingPartyCode || !activeProfile) return;
+    const code = pendingPartyCode;
+    pendingPartyCode = null;
+    await joinWatchParty(code);
+}
+
 window.addEventListener('message', handlePlayerMessage);
 window.addEventListener('pagehide', () => persistPlaybackProgress(false, true));
 $('#close-player').addEventListener('click', closePlayer);
 $('#player').addEventListener('cancel', event => { event.preventDefault(); closePlayer(); });
-$('#player-season').addEventListener('change', () => { persistPlaybackProgress(false,true); loadSeasonEpisodes(); });
+$('#player-season').addEventListener('change', () => {
+    if (activeParty && !activeParty.is_host && !applyingPartyState) {
+        $('#player-season').value = String(playbackSeason);
+        notify('Only the watch party admin can change the season.');
+        return;
+    }
+    persistPlaybackProgress(false,true);
+    loadSeasonEpisodes();
+});
 $('#retry-episodes').addEventListener('click', () => loadSeasonEpisodes());
 $('#retry-player').addEventListener('click', () => openPlayer(playbackTitle.id));
+$('#party-start').addEventListener('click', startWatchParty);
+$('#party-copy').addEventListener('click', copyPartyInviteLink);
+$('#party-sync').addEventListener('click', () => pollWatchParty(true));
+$('#party-end').addEventListener('click', () => leaveWatchParty(false));

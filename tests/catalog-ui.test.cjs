@@ -846,3 +846,58 @@ test('TMDB movies mount the player without a preparation request', async () => {
     assert.match(app.element('#player-frame').innerHTML,/embed\/movie\/42/);
     assert.equal(calls.some(url => url.startsWith('/playback/')),false);
 });
+
+test('watch party locks movie switching for invited guests while allowing the host admin to switch titles', async () => {
+    let partyRoom = null;
+    const app = setup(async (url, options = {}) => {
+        if (url === '/party' && options.method === 'POST') {
+            const body = JSON.parse(options.body);
+            partyRoom = {
+                code: 'ROOM123456',
+                host_profile_id: 'joen',
+                host_name: 'Joen',
+                is_host: true,
+                title_key: body.title_key,
+                title: title(body.title_key, body.title),
+                season: body.season,
+                episode: body.episode,
+                position: body.position,
+                is_playing: body.is_playing,
+                members: [{id:'joen',name:'Joen'},{id:'guest',name:'Guest'}],
+            };
+            return {ok:true, json:async () => ({party: partyRoom})};
+        }
+        if (url === '/party/ROOM123456') {
+            if (options.method === 'PUT') {
+                const body = JSON.parse(options.body);
+                partyRoom = {...partyRoom, title_key: body.title_key, title: title(body.title_key, body.title), position: body.position};
+            }
+            if (options.method === 'DELETE') {
+                return {ok:true, json:async () => ({left:true})};
+            }
+            return {ok:true, json:async () => ({party: partyRoom})};
+        }
+        return response([title('movie:42','Host Movie'), title('movie:99','Other Movie')]);
+    }, new Map([['void.active',JSON.stringify('joen')]]));
+    await settle();
+    await signInRememberedProfile(app);
+    await app.run("openPlayer('movie:42')");
+    await app.run('startWatchParty()');
+    assert.equal(app.element('#party-bar').hidden, false);
+    assert.equal(app.element('#party-role-badge').textContent, 'ADMIN · HOST');
+
+    // Host switches movie -> allowed and updates party room
+    await app.run("openPlayer('movie:99')");
+    assert.equal(partyRoom.title_key, 'movie:99');
+
+    // Now simulate Guest joining via invite link after logging into existing profile
+    partyRoom = {...partyRoom, is_host: false, position: 75};
+    await app.run("activeParty = null; pendingPartyCode = 'ROOM123456'; enterPendingWatchParty()");
+    assert.equal(app.element('#party-role-badge').textContent, 'GUEST · LOCKED');
+    assert.match(app.element('#player-frame').innerHTML, /embed\/movie\/99.*t=75/);
+
+    // Guest tries to switch to movie:42 -> blocked!
+    await app.run("openPlayer('movie:42')");
+    assert.match(app.element('#toast').textContent, /Only the watch party admin can change the movie/);
+    assert.match(app.element('#player-frame').innerHTML, /embed\/movie\/99/);
+});
