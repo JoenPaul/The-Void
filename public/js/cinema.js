@@ -17,8 +17,12 @@ const read = (key, fallback) => { try { return JSON.parse(localStorage.getItem(k
 const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { notify('Browser storage is unavailable. Changes will last for this visit.'); } };
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 let toastTimer;
-function notify(message) {
+function notify(message, undo = null) {
     $('#toast').textContent = message;
+    if (undo) {
+        $('#toast').innerHTML = `<span>${escapeHtml(message)}</span><button id="toast-undo">Undo</button>`;
+        $('#toast-undo').addEventListener('click', () => { $('#toast').style.display = 'none'; undo(); });
+    }
     $('#toast').style.display = 'block';
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => $('#toast').style.display = 'none', 3500);
@@ -322,6 +326,17 @@ function updateProfile() {
     updateSaveButtons();
 }
 function updateSaveButtons() {
+    document.querySelectorAll('[data-save-title]').forEach(button => {
+        const id = button.dataset.saveTitle;
+        const isSaved = saved().includes(id);
+        button.classList.toggle('is-saved', isSaved);
+        if (button.classList.contains('hero-save')) {
+            button.innerHTML = isSaved ? '✓ Added to my list' : `${cinemaIcon('plus')} My list`;
+        }
+        button.setAttribute('aria-pressed', String(isSaved));
+        button.setAttribute('aria-label', (isSaved ? 'Remove from my list: ' : 'Add to my list: ') + (titleIndex.get(id)?.title || 'Title'));
+        button.disabled = !profilesReady || watchlistLoads.has(activeProfile?.id) || watchlistErrors.has(activeProfile?.id) || pendingSaves.has(activeProfile?.id + ':' + id);
+    });
     if ($('#detail-save') && currentMovie) {
         $('#detail-save').disabled = !profilesReady || watchlistLoads.has(activeProfile?.id) || watchlistErrors.has(activeProfile?.id) || pendingSaves.has(activeProfile?.id + ':' + currentMovie.id);
         $('#detail-save').textContent = saved().includes(currentMovie.id) ? '✓ Remove from my list' : '＋ Add to my list';
@@ -344,7 +359,9 @@ async function toggleSave(id) {
         savedLists[profileId] = exists ? items.filter(item => item !== id) : [...new Set([...items, id])];
         backupWatchlists();
         render();
-        notify(exists ? 'Removed from your list' : 'Saved to your profile');
+        notify(exists ? 'Removed from your list' : 'Added to your list', () => {
+            if (activeProfile?.id === profileId && saved().includes(id) !== exists) toggleSave(id);
+        });
     } catch (error) { notify(error.message); }
     finally { pendingSaves.delete(key); updateSaveButtons(); }
 }
@@ -357,8 +374,17 @@ function poster(movie, lazy = false) {
         ? `<img src="${escapeHtml(movie.image)}" ${responsiveImage} decoding="async" alt="${escapeHtml(movie.title)} poster" ${lazy ? 'loading="lazy"' : ''}>`
         : '<span class="poster-placeholder" role="img" aria-label="No poster available">V<span>THE VOID</span></span>';
 }
+function cinemaIcon(name) {
+    const paths = {play:'<path d="M8 5v14l11-7-11-7Z"/>',bookmark:'<path d="M6 4h12v17l-6-4-6 4V4Z"/>',plus:'<path d="M12 5v14M5 12h14"/>'};
+    return `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="${name === 'play' ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">${paths[name] || ''}</svg>`;
+}
+function bindSaveButtons(container) {
+    container.querySelectorAll('[data-save-title]').forEach(button => button.addEventListener('click', () => toggleSave(button.dataset.saveTitle)));
+    updateSaveButtons();
+}
 function card(movie) {
-    return `<button class="movie-card" data-movie="${escapeHtml(movie.id)}" aria-label="View ${escapeHtml(movie.title)}"><div class="poster">${poster(movie,true)}<span class="rating">★ ${escapeHtml(movie.rating)}</span></div><h4>${escapeHtml(movie.title)}</h4><p>${escapeHtml(movie.year)} · ${movie.type === 'Movies' ? 'Movie' : 'Series'}<span>${escapeHtml(movie.genre)}</span></p></button>`;
+    const rating = movie.rating && movie.rating !== '—' ? `<span class="rating">★ ${escapeHtml(movie.rating)}</span>` : '';
+    return `<article class="card-shell"><button class="movie-card" data-movie="${escapeHtml(movie.id)}" aria-label="View ${escapeHtml(movie.title)}"><div class="poster">${poster(movie,true)}${rating}</div><h4>${escapeHtml(movie.title)}</h4><p>${escapeHtml(movie.year)} · ${escapeHtml(movie.genre)}</p></button><button class="poster-save${saved().includes(movie.id) ? ' is-saved' : ''}" data-save-title="${escapeHtml(movie.id)}" aria-label="Add to my list: ${escapeHtml(movie.title)}" aria-pressed="${saved().includes(movie.id)}">${cinemaIcon('bookmark')}</button></article>`;
 }
 function row(title, items, horizontal = false, explore = null) {
     if (!items.length) return '';
@@ -531,6 +557,7 @@ function render() {
     observeCatalogRows();
     $('#catalog').setAttribute('aria-busy', String(loading && !catalog.length));
     $('#catalog').querySelectorAll('[data-movie]').forEach(button => button.addEventListener('click', () => showDetails(button.dataset.movie)));
+    bindSaveButtons($('#catalog'));
     $('#catalog').querySelectorAll('[data-explore-genre]').forEach(button => button.addEventListener('click', () => openGenreGallery(button.dataset.exploreType,button.dataset.exploreGenre,button.dataset.exploreCollection)));
     $('#catalog').querySelectorAll('.genre-posters').forEach((track,index) => { track.scrollLeft = rowPositions[index] || 0; });
     initializeRowArrows();
@@ -618,7 +645,8 @@ function showDetails(id) {
     currentMovie = titleIndex.get(id);
     if (!currentMovie) return;
     const movie = currentMovie;
-    $('#detail-content').innerHTML = `<div class="detail-layout"><div class="detail-poster">${poster(movie)}</div><div><p class="eyebrow">THE VOID COLLECTION</p><h2 id="detail-title">${escapeHtml(movie.title)}</h2><div class="metadata"><b>★ ${escapeHtml(movie.rating)}</b><span>${escapeHtml(movie.year)}</span><span>${escapeHtml(movie.genre)}</span></div><p>${escapeHtml(movie.description)}</p>${sourceCredit(movie)}<div class="detail-actions"><button class="primary" id="detail-watch">▶ Watch now</button><button class="secondary" id="detail-save"></button></div><p class="playback-note">Playback provided by CineSrc.</p></div></div>`;
+    const backdrop = typeof movie.backdrop === 'string' && /^https:\/\/image\.tmdb\.org\//.test(movie.backdrop) ? movie.backdrop : null;
+    $('#detail-content').innerHTML = `<div class="detail-band">${backdrop ? `<img src="${escapeHtml(backdrop)}" alt="">` : poster(movie)}</div><div class="detail-layout"><div class="detail-poster">${poster(movie)}</div><div class="detail-info"><h2 id="detail-title">${escapeHtml(movie.title)}</h2><div class="metadata">${movie.rating && movie.rating !== '—' ? `<b>★ ${escapeHtml(movie.rating)}</b>` : ''}<span>${escapeHtml(movie.release_date || movie.year)}</span><span>${movie.type === 'Series' ? 'Series' : 'Movie'}</span></div><div class="detail-genres">${(movie.genres || [movie.genre]).map(genre => `<span>${escapeHtml(genre)}</span>`).join('')}</div><p class="detail-overview">${escapeHtml(movie.description)}</p><div class="detail-actions"><button class="primary" id="detail-watch">${cinemaIcon('play')} Watch now</button><button class="secondary" id="detail-save"></button></div></div></div><div class="detail-footer">${sourceCredit(movie)}<p class="playback-note">Playback provided by CineSrc — availability and ads are controlled by the provider.</p></div>`;
     $('#detail-save').addEventListener('click', () => toggleSave(id));
     $('#detail-watch').addEventListener('click', () => openPlayer(id));
     handleImageErrors($('#detail-content'));
@@ -664,6 +692,14 @@ $('#details').addEventListener('click', event => {
     const rect = $('#details').getBoundingClientRect();
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) $('#details').close();
 });
+document.querySelectorAll('a.brand[href="/"]').forEach(link => link.addEventListener('click', event => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    if (!activeProfile) return;
+    $('[data-page="Discover"]').click();
+    window.scrollTo({top:0,behavior:'instant'});
+}));
+
 document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => {
     if (page === button.dataset.page && genre === 'All' && !query && !catalogGallery) return;
     page = button.dataset.page;
@@ -673,7 +709,10 @@ document.querySelectorAll('[data-page]').forEach(button => button.addEventListen
         query = '';
         $('#search').value = '';
     }
-    document.querySelectorAll('[data-page]').forEach(item => item.classList.toggle('active',item === button));
+    document.querySelectorAll('[data-page]').forEach(item => {
+        item.classList.toggle('active',item === button);
+        item.setAttribute('aria-current',item === button ? 'page' : 'false');
+    });
     loadCatalog();
 }));
 document.querySelectorAll('[data-genre]').forEach(button => button.addEventListener('click', () => {

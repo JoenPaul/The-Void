@@ -18,18 +18,18 @@
 <body>
     <header>
         <a class="brand" href="/" aria-label="The Void home"><span class="brand-icon">V</span> THE VOID<span class="brand-dot">.</span></a>
-        <nav aria-label="Main navigation">
-            <button class="nav-link active" data-page="Discover">Discover</button>
-            <button class="nav-link" data-page="Movies">Movies</button>
-            <button class="nav-link" data-page="Series">Series</button>
-            <button class="nav-link" data-page="My list">My list</button>
+        <nav class="browse-nav" aria-label="Main navigation">
+            <button class="nav-link active" data-page="Discover"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m16 8-2 6-6 2 2-6 6-2Z"/></svg>Discover</button>
+            <button class="nav-link" data-page="Movies"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M16 5v14"/></svg>Movies</button>
+            <button class="nav-link" data-page="Series"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 3v4M16 3v4"/></svg>Series</button>
+            <button class="nav-link" data-page="My list"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v17l-6-4-6 4V4Z"/></svg>My list</button>
         </nav>
         <div class="header-actions"><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" maxlength="100" placeholder="Search titles…" aria-label="Search titles"></label><div class="profile-menu-wrap"><button id="switch-profile" class="profile-switch" aria-label="Profile menu" aria-expanded="false" aria-controls="profile-menu"><span id="profile-avatar">J</span><span id="profile-name">Profile</span><span>⌄</span></button><div id="profile-menu" hidden><button id="profile-settings">Settings</button><button id="profile-signout">Sign out</button></div></div></div>
     </header>
     <main id="browse">
         <section class="hero release-carousel" aria-label="Newly released movies" aria-roledescription="carousel">
             <div id="release-track" class="release-track"><div class="release-placeholder"><p class="eyebrow">FRESH ON THE BIG SCREEN</p><h1>New stories await.</h1><p id="release-status" role="status">Finding the latest releases…</p><button id="retry-releases" class="secondary" hidden>Try again</button></div></div>
-            <div class="hero-bottom release-bottom"><span>NEW RELEASES · THE VOID SELECTS</span><div id="release-dots" class="release-dots" aria-label="Choose a movie"></div><div class="release-controls"><span id="release-count" aria-live="off"></span><button id="release-previous" class="secondary" aria-label="Previous release" disabled>←</button><button id="release-pause" class="secondary" aria-label="Pause carousel" disabled>Pause</button><button id="release-next" class="secondary" aria-label="Next release" disabled>→</button></div></div>
+            <div class="hero-bottom release-bottom"><span id="release-count" aria-live="off"></span><div id="release-dots" class="release-dots" aria-label="Choose a movie"></div><div class="release-controls"><button id="release-previous" class="secondary" aria-label="Previous release" disabled>←</button><button id="release-pause" class="secondary" aria-label="Pause carousel" disabled>Pause</button><button id="release-next" class="secondary" aria-label="Next release" disabled>→</button></div></div>
         </section>
         <section id="recently-watched" class="library recent-library" aria-labelledby="recent-title" hidden>
             <div class="row-heading"><h3 id="recent-title"><span>▍</span>Recently watched</h3><small id="recent-profile"></small></div>

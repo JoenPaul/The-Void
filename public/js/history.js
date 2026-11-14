@@ -48,6 +48,7 @@ function renderWatchHistory() {
         return card(entry).replace('class="movie-card"','class="movie-card recent-card"').replace('</button>',`<p class="recent-caption">${escapeHtml(episode + status)}<span>${escapeHtml(when)}</span></p><span class="recent-progress" aria-hidden="true"><span style="width:${percent}%"></span></span></button>`);
     }).join('')}</div>` : !historyLoading.has(id) && !historyErrors.has(id) ? '<p class="history-empty">Your next movie night starts here. Titles appear after you begin watching.</p>' : '';
     $('#recent-content').querySelectorAll('[data-movie]').forEach(button => button.addEventListener('click', () => openPlayer(button.dataset.movie)));
+    bindSaveButtons($('#recent-content'));
     handleImageErrors($('#recent-content'));
 }
 async function queueWatchHistory(profileId, movie, progress) {

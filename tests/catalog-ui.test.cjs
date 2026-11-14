@@ -136,6 +136,32 @@ test('failed saves do not change the list or claim success', async () => {
     assert.match(app.element('#toast').textContent,/Could not reach/);
 });
 
+test('save feedback can undo a completed write without changing another profile', async () => {
+    const app = setup(async () => response([title('movie:42','A saved movie')]), new Map([['void.active',JSON.stringify('joen')]]));
+    await settle();
+    await signInRememberedProfile(app);
+    await app.run("toggleSave('movie:42')");
+    assert.equal(app.database.lists.get('joen').has('movie:42'), true);
+    app.element('#toast-undo').listeners.click();
+    await settle();
+    assert.equal(app.database.lists.get('joen').has('movie:42'), false);
+    await app.run("toggleSave('movie:42')");
+    app.run("activeProfile = profiles.find(profile => profile.id === 'guest')");
+    app.element('#toast-undo').listeners.click();
+    await settle();
+    assert.equal(app.database.lists.get('joen').has('movie:42'), true);
+    assert.equal(app.run('saved().length'), 0);
+});
+
+test('poster save controls are separate buttons and omit missing ratings', async () => {
+    const app = setup(async () => response([title('movie:42','A saved movie')]));
+    await settle();
+    const markup = app.run('card({...titleIndex.get("movie:42"), rating:"—"})');
+    assert.match(markup, /<\/button><button class="poster-save/);
+    assert.doesNotMatch(markup, /class="rating"/);
+    assert.match(markup, /data-save-title="movie:42"/);
+});
+
 test('legacy import runs once and does not resurrect removed titles', async () => {
     const storage = new Map([['void.active',JSON.stringify('joen')],['void.lists',JSON.stringify({joen:[1]})]]);
     const app = setup(async () => ({ok:true,json:async () => ({source:'tmdb',results:[]})}),storage);
@@ -258,7 +284,9 @@ test('new-release carousel advances horizontally after its delay and pauses for 
     await settle();
     await signInRememberedProfile(app);
     assert.match(app.element('#release-track').innerHTML, /First release/);
-    assert.doesNotMatch(app.element('#release-track').innerHTML, /My list|Dune: Part Two/);
+    assert.doesNotMatch(app.element('#release-track').innerHTML, /Dune: Part Two/);
+    assert.match(app.element('#release-track').innerHTML, /data-release-watch="movie:81"/);
+    assert.match(app.element('#release-track').innerHTML, /data-save-title="movie:81"/);
     app.run('refreshReleaseRotation()');
     const timer = [...app.timers.values()].find(timer => timer.delay === 3000);
     assert.ok(timer);
