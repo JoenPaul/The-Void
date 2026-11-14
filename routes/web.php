@@ -3,6 +3,7 @@
 use App\Http\Controllers\CatalogController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PlaybackController;
+use App\Http\Controllers\WatchPartyController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -42,3 +43,10 @@ Route::put('/superadmin/profiles/{profile}/pin', [\App\Http\Controllers\Superadm
 Route::put('/superadmin/pin', [\App\Http\Controllers\SuperadminController::class, 'changePin'])->middleware('throttle:5,1,admin-pin:');
 
 Route::put('/superadmin/profiles/{profile}/archive', [\App\Http\Controllers\SuperadminController::class, 'setArchived'])->middleware('throttle:30,1,admin-archive:');
+
+Route::controller(WatchPartyController::class)->group(function () {
+    Route::post('/party', 'store')->middleware('throttle:15,1,party-create:');
+    Route::get('/party/{code}', 'show')->where('code', '[A-Za-z0-9]{6,24}')->middleware('throttle:120,1,party-poll:');
+    Route::put('/party/{code}', 'update')->where('code', '[A-Za-z0-9]{6,24}')->middleware('throttle:60,1,party-sync:');
+    Route::delete('/party/{code}', 'destroy')->where('code', '[A-Za-z0-9]{6,24}')->middleware('throttle:30,1,party-leave:');
+});

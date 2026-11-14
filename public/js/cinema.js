@@ -210,6 +210,7 @@ async function enterProfile(id) {
         $('#profile-error').textContent = '';
         updateProfile();
         render();
+        if (typeof enterPendingWatchParty === 'function') enterPendingWatchParty();
         return true;
     } catch (error) { $('#profile-error').textContent = error.message; return false; }
     finally { profileBusy = false; renderProfiles(); }
@@ -255,6 +256,7 @@ async function confirmProfileTransition() {
                 return;
             }
         } else {
+            if (typeof leaveWatchParty === 'function') await leaveWatchParty(true);
             if (typeof closePlayer === 'function') closePlayer();
             await profileRequest('/profile-logout', 'POST');
             activeProfile = null;

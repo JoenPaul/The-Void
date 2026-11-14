@@ -84,7 +84,19 @@
     </dialog>
     <dialog id="details" aria-labelledby="detail-title"><button class="close" aria-label="Close details">×</button><div id="detail-content"></div></dialog>
     <dialog id="player" aria-labelledby="player-title">
-        <div class="player-heading"><div><p class="eyebrow">THE VOID CINEMA</p><h2 id="player-title"></h2></div><button id="close-player" class="secondary" aria-label="Close player">×</button></div>
+        <div class="player-heading"><div><p class="eyebrow">THE VOID CINEMA</p><h2 id="player-title"></h2></div><div class="player-header-actions"><button id="party-start" class="secondary" type="button">＋ Watch party</button><button id="close-player" class="secondary" aria-label="Close player">×</button></div></div>
+        <section id="party-bar" class="party-bar" aria-label="Watch party controls" hidden>
+            <div class="party-meta">
+                <span id="party-role-badge" class="party-badge">HOST</span>
+                <p id="party-summary" role="status"></p>
+                <span id="party-members" class="party-members"></span>
+            </div>
+            <div class="party-actions">
+                <button id="party-copy" class="secondary" type="button">Copy invite link</button>
+                <button id="party-sync" class="secondary" type="button" hidden>Sync to host</button>
+                <button id="party-end" class="secondary" type="button">End party</button>
+            </div>
+        </section>
         <p id="player-status" role="status"></p>
         <div id="player-frame"></div>
         <section id="episode-controls" aria-label="Series episodes" hidden>
