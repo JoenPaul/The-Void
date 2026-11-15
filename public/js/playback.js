@@ -316,7 +316,10 @@ function renderPartyBar() {
         : `Hosted by ${activeParty.host_name} · Only the host can change or manipulate the movie.`;
     $('#party-members').textContent = `${members.length || 1} watching`;
     $('#party-sync').hidden = isHost;
-    $('#party-end').textContent = isHost ? 'End party' : 'Leave party';
+    const endLabel = isHost ? 'End party' : 'Leave party';
+    $('#party-end-label').textContent = endLabel;
+    $('#party-end').setAttribute('aria-label', endLabel);
+    $('#party-end').title = endLabel;
 }
 function renderPartyInvitations() {
     const visibleInvitations = partyInvitations.filter(invitation => invitation.code !== activeParty?.code);

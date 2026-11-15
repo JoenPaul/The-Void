@@ -146,6 +146,7 @@ body>header .brand-icon{width:26px;height:28px;font-size:13px;margin-right:11px}
 #party-invitations-list button{flex:none;padding-inline:12px}
 #party-invite-form{display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%;font-size:13px}
 #party-invite-profile{max-width:100%;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#19121f;color:inherit;font:inherit}
+.party-action-icon{display:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .recent-library{padding-bottom:0}
 .row-heading,.recent-library .row-heading,.genre-section .row-heading{gap:14px;margin:0 0 16px;align-items:center}
 .row-heading h3{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:500;letter-spacing:-.2px;margin:0}
@@ -235,5 +236,11 @@ footer{margin:32px 40px 0}
  #toast{bottom:calc(84px + env(safe-area-inset-bottom))}footer{margin:28px 16px 0}
 }
 @media(hover:none){.poster-save{opacity:1}}
+@media(max-width:700px){
+ .party-bar>div.party-actions{margin-inline-start:auto;justify-content:flex-end}
+ .party-actions .secondary:has(.party-action-icon){width:44px;min-height:44px;padding:0}
+ .party-actions .party-action-icon{display:block}
+ .party-actions .party-action-label{display:none}
+}
 @media(prefers-reduced-motion:reduce){[data-pending-row] .poster{animation:none}.poster,.poster-save,.primary,.secondary,.ghost{transition:none}}
 .player-header-actions{display:flex;align-items:center;gap:10px}#party-start{font-size:12.5px;min-height:38px;padding:0 14px}.party-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:10px 0 12px;padding:12px 16px;border:1px solid #9959ff55;border-radius:12px;background:#1a1326}.party-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}.party-meta p{margin:0;font-size:12.5px;color:#EBD9FF}.party-badge{padding:4px 8px;border-radius:6px;background:var(--violet);color:#fff;font-size:10px;font-weight:700;letter-spacing:.08em}.party-members{font-size:11.5px;color:var(--muted);padding:3px 9px;border:1px solid var(--line-strong);border-radius:999px}.party-actions{display:flex;gap:8px;flex-wrap:wrap}.party-actions .secondary{min-height:34px;padding:0 12px;font-size:12px}.episode-tile:disabled{opacity:.45;cursor:not-allowed}#player-season:disabled{opacity:.55;cursor:not-allowed}

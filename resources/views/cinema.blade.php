@@ -106,10 +106,18 @@
                 <span id="party-members" class="party-members"></span>
             </div>
             <div class="party-actions">
-                <button id="party-invite" class="secondary" type="button" aria-expanded="false" aria-controls="party-invite-form" hidden>Invite profile</button>
-                <button id="party-copy" class="secondary" type="button">Copy invite link</button>
-                <button id="party-sync" class="secondary" type="button" hidden>Sync to host</button>
-                <button id="party-end" class="secondary" type="button">End party</button>
+                <button id="party-invite" class="secondary" type="button" aria-label="Invite profile" aria-expanded="false" aria-controls="party-invite-form" title="Invite profile" hidden>
+                    <svg class="party-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="7" r="3"/><path d="M3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2m4-12v6m-3-3h6"/></svg><span class="party-action-label">Invite profile</span>
+                </button>
+                <button id="party-copy" class="secondary" type="button" aria-label="Copy invite link" title="Copy invite link">
+                    <svg class="party-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7 .5l4-4a5 5 0 0 0-7-7l-2.3 2.3m2.3 6.2a5 5 0 0 0-7-.5l-4 4a5 5 0 0 0 7 7l2.3-2.3"/></svg><span class="party-action-label">Copy invite link</span>
+                </button>
+                <button id="party-sync" class="secondary" type="button" aria-label="Sync to host" title="Sync to host" hidden>
+                    <svg class="party-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4v5h-5M4 20v-5h5m-4.3-5a8 8 0 0 1 13.4-4L20 9m-16 6 1.9 3a8 8 0 0 0 13.4-4"/></svg><span class="party-action-label">Sync to host</span>
+                </button>
+                <button id="party-end" class="secondary" type="button" aria-label="End party" title="End party">
+                    <svg class="party-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17H5V7h5m6 1 4 4-4 4m-7-4h11"/></svg><span id="party-end-label" class="party-action-label">End party</span>
+                </button>
             </div>
             <form id="party-invite-form" class="party-actions" hidden>
                 <label for="party-invite-profile">Profile</label>

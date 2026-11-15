@@ -909,6 +909,7 @@ test('watch party locks movie switching for invited guests while allowing the ho
     await app.run('startWatchParty()');
     assert.equal(app.element('#party-bar').hidden, false);
     assert.equal(app.element('#party-role-badge').textContent, 'ADMIN · HOST');
+    assert.equal(app.element('#party-end-label').textContent, 'End party');
 
     // Host switches movie -> allowed and updates party room
     await app.run("openPlayer('movie:99')");
@@ -918,6 +919,7 @@ test('watch party locks movie switching for invited guests while allowing the ho
     partyRoom = {...partyRoom, is_host: false, position: 75};
     await app.run("activeParty = null; pendingPartyCode = 'ROOM123456'; enterPendingWatchParty()");
     assert.equal(app.element('#party-role-badge').textContent, 'GUEST · LOCKED');
+    assert.equal(app.element('#party-end-label').textContent, 'Leave party');
     assert.match(app.element('#player-frame').innerHTML, /embed\/movie\/99.*t=75/);
 
     // Guest tries to switch to movie:42 -> blocked!
