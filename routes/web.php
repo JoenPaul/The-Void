@@ -46,6 +46,8 @@ Route::put('/superadmin/profiles/{profile}/archive', [\App\Http\Controllers\Supe
 
 Route::controller(WatchPartyController::class)->group(function () {
     Route::post('/party', 'store')->middleware('throttle:15,1,party-create:');
+    Route::get('/party-invitations', 'invitations')->middleware('throttle:60,1,party-inbox:');
+    Route::put('/party/{code}/invitations', 'invite')->where('code', '[A-Za-z0-9]{6,24}')->middleware('throttle:30,1,party-invite:');
     Route::get('/party/{code}', 'show')->where('code', '[A-Za-z0-9]{6,24}')->middleware('throttle:120,1,party-poll:');
     Route::put('/party/{code}', 'update')->where('code', '[A-Za-z0-9]{6,24}')->middleware('throttle:60,1,party-sync:');
     Route::delete('/party/{code}', 'destroy')->where('code', '[A-Za-z0-9]{6,24}')->middleware('throttle:30,1,party-leave:');

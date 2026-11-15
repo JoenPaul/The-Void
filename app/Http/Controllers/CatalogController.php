@@ -15,13 +15,15 @@ use UnexpectedValueException;
 
 class CatalogController extends Controller
 {
+    private const int ANIMATION_GENRE_ID = 16;
+
     private const array GENRES = [
         'movie' => ['Horror' => 27, 'Romance' => 10749, 'Sci-Fi' => 878, 'Fantasy' => 14, 'Action' => 28,
-            'Adventure' => 12, 'Comedy' => 35, 'Drama' => 18, 'Thriller' => 53, 'Animation' => 16,
+            'Adventure' => 12, 'Comedy' => 35, 'Drama' => 18, 'Thriller' => 53, 'Animation' => self::ANIMATION_GENRE_ID,
             'Crime' => 80, 'Mystery' => 9648, 'Family' => 10751, 'Documentary' => 99, 'History' => 36,
             'Music' => 10402, 'War' => 10752, 'Western' => 37, 'TV Movie' => 10770],
         'tv' => ['Sci-Fi & Fantasy' => 10765, 'Action & Adventure' => 10759, 'Comedy' => 35,
-            'Drama' => 18, 'Animation' => 16, 'Crime' => 80, 'Mystery' => 9648, 'Family' => 10751,
+            'Drama' => 18, 'Animation' => self::ANIMATION_GENRE_ID, 'Crime' => 80, 'Mystery' => 9648, 'Family' => 10751,
             'Documentary' => 99, 'Kids' => 10762, 'News' => 10763, 'Reality' => 10764,
             'Soap' => 10766, 'Talk' => 10767, 'War & Politics' => 10768, 'Western' => 37],
     ];
@@ -30,13 +32,13 @@ class CatalogController extends Controller
     public static function genreLabels(string $type = 'all'): array
     {
         if ($type === 'movie') {
-            return ['All', ...array_keys(self::GENRES['movie'])];
+            return ['All', 'Anime', ...array_keys(self::GENRES['movie'])];
         }
         if ($type === 'tv') {
-            return ['All', 'Sci-Fi', 'Fantasy', 'Action', 'Adventure', ...array_keys(self::GENRES['tv'])];
+            return ['All', 'Anime', 'Sci-Fi', 'Fantasy', 'Action', 'Adventure', ...array_keys(self::GENRES['tv'])];
         }
 
-        return ['All', ...array_values(array_unique([...array_keys(self::GENRES['movie']), ...array_keys(self::GENRES['tv'])]))];
+        return ['All', 'Anime', ...array_values(array_unique([...array_keys(self::GENRES['movie']), ...array_keys(self::GENRES['tv'])]))];
     }
 
     public function __invoke(Request $request): JsonResponse
@@ -146,7 +148,7 @@ class CatalogController extends Controller
                 if ($response instanceof \Throwable) {
                     throw $response;
                 }
-                $catalog = $this->catalogResults($response->throw(), $type, $request['genre_id'], $page, $collection);
+                $catalog = $this->catalogResults($response->throw(), $type, $request['genre_id'], $page, $collection, $genre === 'Anime');
                 Cache::put($request['key'], $catalog, $query !== '' || $latest || $collection === 'recent' ? 300 : 1800);
                 $catalogs[$type] = $catalog;
             } catch (ConnectionException|RequestException|UnexpectedValueException $exception) {
@@ -160,7 +162,7 @@ class CatalogController extends Controller
     /** @return array{key: string, genre_id: ?int, endpoint: string, parameters: array<string, int|string>}|null */
     private function catalogRequest(string $token, string $type, string $query, string $genre, int $page, bool $latest, string $collection): ?array
     {
-        $genreId = self::GENRES[$type][$genre] ?? null;
+        $genreId = $genre === 'Anime' ? self::ANIMATION_GENRE_ID : (self::GENRES[$type][$genre] ?? null);
         if ($type === 'tv' && $genreId === null) {
             $genreId = match ($genre) {
                 'Sci-Fi', 'Fantasy' => 10765,
@@ -171,7 +173,7 @@ class CatalogController extends Controller
         if ($genre !== 'All' && $genreId === null) {
             return null;
         }
-        $key = 'tmdb.catalog.v6.'.hash('sha256', json_encode([$token, $type, $query, $genre, $page, $latest, $collection, $collection === 'recent' ? now('UTC')->toDateString() : null]));
+        $key = 'tmdb.catalog.v7.'.hash('sha256', json_encode([$token, $type, $query, $genre, $page, $latest, $collection, $collection === 'recent' ? now('UTC')->toDateString() : null]));
 
         $parameters = ['language' => 'en-US', 'include_adult' => 'false', 'page' => $page];
         if ($query !== '') {
@@ -180,6 +182,9 @@ class CatalogController extends Controller
             $parameters['sort_by'] = 'popularity.desc';
             if ($genreId !== null) {
                 $parameters['with_genres'] = $genreId;
+            }
+            if ($genre === 'Anime') {
+                $parameters['with_original_language'] = 'ja';
             }
             if ($collection === 'recent') {
                 $dateField = $type === 'movie' ? 'primary_release_date' : 'first_air_date';
@@ -198,7 +203,7 @@ class CatalogController extends Controller
     }
 
     /** @return array{results: list<array<string, mixed>>, has_more: bool} */
-    private function catalogResults(Response $response, string $type, ?int $genreId, int $page, string $collection): array
+    private function catalogResults(Response $response, string $type, ?int $genreId, int $page, string $collection, bool $animeOnly): array
     {
         $items = $response->json('results');
         if (! is_array($items) || ! array_is_list($items)) {
@@ -210,10 +215,14 @@ class CatalogController extends Controller
                 continue;
             }
             $genreIds = $item['genre_ids'] ?? [];
-            if ($genreId !== null && ! in_array($genreId, $genreIds, true)) {
+            $isAnime = ($item['original_language'] ?? null) === 'ja' && in_array(self::ANIMATION_GENRE_ID, $genreIds, true);
+            if (($genreId !== null && ! in_array($genreId, $genreIds, true)) || ($animeOnly && ! $isAnime)) {
                 continue;
             }
             $genres = array_keys(array_filter(self::GENRES[$type], fn (int $id): bool => in_array($id, $genreIds, true)));
+            if ($isAnime) {
+                $genres[] = 'Anime';
+            }
             $poster = $item['poster_path'] ?? null;
             $backdrop = $item['backdrop_path'] ?? null;
             $date = $item[$type === 'movie' ? 'release_date' : 'first_air_date'] ?? '';

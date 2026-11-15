@@ -35,7 +35,9 @@ function setup(fetch, storage = new Map(), database = {profiles:new Map([['joen'
             const result = data => ({ok:true,json:async () => data});
             if (database.failWrites && method !== 'GET') return {ok:false,status:503,json:async () => ({})};
             if (parts.length === 2) return result({profiles:[...database.profiles.values()].filter(profile => !profile.archived).map(profile => ({...profile})),archived_ids:[...database.profiles.values()].filter(profile => profile.archived).map(profile => profile.id)});
-            if (parts[3] === 'login') return body.pin === '4567' ? result({must_change_pin:!!database.mustChangePin}) : {ok:false,status:422,json:async () => ({errors:{pin:['Incorrect PIN. Please try again.']}})};
+            if (parts[3] === 'login') return body.pin === '4567'
+                ? result({must_change_pin:!!database.mustChangePin, ...(options.headers['X-Viewer-Tab'] === '1' ? {viewer_token:`viewer-${parts[2]}`} : {})})
+                : {ok:false,status:422,json:async () => ({errors:{pin:['Incorrect PIN. Please try again.']}})};
             if (parts[3] === 'pin') return result({changed:true});
             if (parts.length === 3) {
                 if (method === 'DELETE') {
@@ -429,6 +431,28 @@ test('genre row arrows move a page and disable at either end', async () => {
 });
 
 const genreFilter = (genre, types) => ({dataset:{genre,types},classList:{toggle() {}},setAttribute() {},addEventListener() {}});
+
+test('the Anime filter is available on Discover and requests movies and series together', async () => {
+    const filters = [genreFilter('All','Movies Series'), genreFilter('Anime','Movies Series'), genreFilter('History','Movies')];
+    const requested = [];
+    const app = setup(async url => {
+        const params = new URL(url, 'https://void.test').searchParams;
+        requested.push(params);
+        return response(params.get('genre') === 'Anime' ? [
+            {...title('movie:42','Anime Movie'), genres:['Animation','Anime']},
+            {...title('tv:88','Anime Show'), type:'Series', genres:['Animation','Anime']},
+        ] : []);
+    }, new Map(), undefined, false, filters);
+    await settle();
+    assert.equal(filters[1].hidden, false);
+    assert.equal(filters[2].hidden, true);
+
+    await app.run("genre = 'Anime'; loadCatalog()");
+    assert.equal(requested.at(-1).get('type'), 'all');
+    assert.equal(requested.at(-1).get('genre'), 'Anime');
+    assert.match(app.element('#catalog').innerHTML, /Anime Movie/);
+    assert.match(app.element('#catalog').innerHTML, /Anime Show/);
+});
 
 test('Discover shows four short curated rows and opens a paginated genre gallery', async () => {
     const calls = [];
@@ -900,4 +924,152 @@ test('watch party locks movie switching for invited guests while allowing the ho
     await app.run("openPlayer('movie:42')");
     assert.match(app.element('#toast').textContent, /Only the watch party admin can change the movie/);
     assert.match(app.element('#player-frame').innerHTML, /embed\/movie\/99/);
+});
+
+test('an invited guest follows the host without prompting or changing solo progress', async () => {
+    const saved = {'joen:movie:42':{position:310,duration:600}};
+    const storage = new Map([['void.active',JSON.stringify('joen')], ['void.playback.v1',JSON.stringify(saved)]]);
+    let party = {code:'ROOM123456', host_name:'Host', is_host:false, title_key:'movie:42',
+        title:title('movie:42','Party Movie'), position:0, is_playing:false};
+    const app = setup(async url => url === '/party/ROOM123456'
+        ? {ok:true, json:async () => ({party})}
+        : response([party.title]), storage);
+    await settle();
+    await signInRememberedProfile(app);
+    await app.run("openPlayer('movie:42')");
+    assert.match(app.element('#player-frame').innerHTML, /t=310/);
+
+    await app.run("joinWatchParty('ROOM123456')");
+    const partyFrame = app.element('#player-frame').innerHTML;
+    assert.match(partyFrame, /continueprompt=false/);
+    assert.match(partyFrame, /[&;]t=0(?:[&\"])/);
+    assert.doesNotMatch(partyFrame, /t=310/);
+
+    const commands = [];
+    const iframe = app.element('#cinesrc-player');
+    iframe.contentWindow.postMessage = (message, origin) => commands.push([message.command, Array.from(message.args), origin]);
+    const sendEvent = (type, position = 0) => app.run(`handlePlayerMessage({origin:playerOrigin,source:$('#cinesrc-player').contentWindow,data:{type:'cinesrc:${type}',currentTime:${position},duration:600}})`);
+    sendEvent('loadedmetadata');
+    commands.length = 0;
+    party = {...party, position:75, is_playing:true};
+    await app.run('pollWatchParty()');
+    assert.deepEqual(commands, [['seek',[75],'https://cinesrc.st'], ['play',[],'https://cinesrc.st']]);
+    sendEvent('play', 75);
+
+    commands.length = 0;
+    party = {...party, position:80, is_playing:false};
+    await app.run('pollWatchParty()');
+    assert.deepEqual(commands, [['pause',[],'https://cinesrc.st'], ['seek',[80],'https://cinesrc.st']]);
+    assert.equal(app.element('#player-frame').innerHTML, partyFrame);
+    sendEvent('pause', 80);
+    await app.run('leaveWatchParty()');
+    assert.equal(app.element('#player').open, false);
+    assert.deepEqual(JSON.parse(storage.get('void.playback.v1')), saved);
+});
+
+test('a signed-in viewer can see a new profile invitation and join it from the catalog', async () => {
+    const movie = title('movie:42','Party Movie');
+    const party = {code:'ROOM123456', host_name:'Joen', title_key:movie.id, title:movie, position:42, is_playing:false};
+    const respond = data => ({ok:true, json:async () => data});
+    let recipient = null;
+    const host = setup(async (url, options) => {
+        if (url === '/party') return respond({party:{...party,is_host:true}});
+        if (url === '/party/ROOM123456/invitations') {
+            assert.equal(options.headers['X-Viewer-Token'], 'viewer-joen');
+            recipient = JSON.parse(options.body).profile_id;
+            return respond({invited:true});
+        }
+        return response([movie]);
+    }, new Map([['void.active',JSON.stringify('joen')]]));
+    const guest = setup(async (url, options) => {
+        if (url === '/party-invitations') {
+            assert.equal(options.headers['X-Viewer-Token'], 'viewer-guest');
+            return respond({invitations:recipient === 'guest'
+                ? [{code:party.code, title:movie.title, host_name:party.host_name}] : []});
+        }
+        if (url === '/party/ROOM123456') return respond({party:{...party,is_host:false}});
+        return response([movie]);
+    }, new Map([['void.active',JSON.stringify('guest')]]));
+    await settle();
+    await signInRememberedProfile(host);
+    await signInRememberedProfile(guest);
+    assert.equal(guest.element('#party-invitations').hidden, true);
+
+    await host.run("openPlayer('movie:42'); startWatchParty()");
+    host.element('#party-invite').listeners.click();
+    assert.match(host.element('#party-invite-profile').innerHTML, /value="guest"/);
+    assert.doesNotMatch(host.element('#party-invite-profile').innerHTML, /value="joen"/);
+    host.element('#party-invite-profile').value = 'guest';
+    await host.element('#party-invite-form').listeners.submit({preventDefault() {}});
+    assert.equal(host.element('#party-invite-status').textContent, 'Invitation sent.');
+
+    const poll = [...guest.timers.values()].find(timer => timer.delay === 15000);
+    await poll.callback();
+    assert.equal(guest.element('#party-notifications').hidden, false);
+    assert.equal(guest.element('#party-invitation-count').textContent, '1');
+    assert.equal(guest.element('#party-invitations').hidden, true);
+    guest.element('#profile-menu').hidden = true;
+    const bell = guest.element('#party-notification-toggle');
+    bell.listeners.pointerenter({pointerType:'mouse'});
+    assert.equal(guest.element('#party-invitations').hidden, false);
+    guest.element('#party-notifications').listeners.pointerleave({pointerType:'mouse'});
+    assert.equal(guest.element('#party-invitations').hidden, true);
+    bell.listeners.click();
+    assert.equal(guest.element('#party-invitations').hidden, false);
+    assert.match(guest.element('#party-invitations-list').innerHTML, /Party Movie.*Invited by Joen/);
+    await guest.element('#party-invitations-list').listeners.click({target:{closest:() => ({dataset:{partyJoin:party.code}})}});
+    assert.match(guest.element('#player-frame').innerHTML, /continueprompt=false.*t=42/);
+    assert.equal(guest.element('#party-invitations').hidden, true);
+    assert.equal(guest.element('#party-invitation-count').hidden, true);
+});
+
+test('ended parties disappear from the open invitation bell and its badge', async () => {
+    let invitations = [
+        {code:'ROOM123456', title:'First Movie', host_name:'Joen'},
+        {code:'ROOM654321', title:'Second Movie', host_name:'Alex'},
+    ];
+    const guest = setup(async url => url === '/party-invitations'
+        ? {ok:true, json:async () => ({invitations})}
+        : response([]), new Map([['void.active',JSON.stringify('guest')]]));
+    await settle();
+    await signInRememberedProfile(guest);
+    assert.equal(guest.element('#party-invitation-count').textContent, '2');
+
+    invitations = invitations.slice(1);
+    guest.element('#party-notification-toggle').listeners.click();
+    await settle();
+    assert.equal(guest.element('#party-invitation-count').textContent, '1');
+    assert.doesNotMatch(guest.element('#party-invitations-list').innerHTML, /First Movie/);
+    assert.match(guest.element('#party-invitations-list').innerHTML, /Second Movie/);
+
+    invitations = [];
+    const poll = [...guest.timers.values()].find(timer => timer.delay === 5000);
+    await poll.callback();
+    assert.equal(guest.element('#party-invitations').hidden, false);
+    assert.equal(guest.element('#party-invitations-list').innerHTML, '');
+    assert.equal(guest.element('#party-invitations-empty').hidden, false);
+    assert.equal(guest.element('#party-invitation-count').hidden, true);
+});
+
+test('the host keeps party controls until the server confirms the room ended', async () => {
+    const movie = title('movie:42','Party Movie');
+    let ended = false;
+    const app = setup(async (url, options) => {
+        if (url === '/party') return {ok:true, json:async () => ({party:{code:'ROOM123456', is_host:true}})};
+        if (url === '/party/ROOM123456' && options.method === 'DELETE') {
+            return {ok:true, json:async () => ended ? {ended:true} : {left:true}};
+        }
+        return response([movie]);
+    }, new Map([['void.active',JSON.stringify('joen')]]));
+    await settle();
+    await signInRememberedProfile(app);
+    await app.run("openPlayer('movie:42'); startWatchParty()");
+    await app.run('leaveWatchParty()');
+    assert.equal(app.element('#party-bar').hidden, false);
+    assert.match(app.element('#toast').textContent, /room is still open/);
+
+    ended = true;
+    await app.run('leaveWatchParty()');
+    assert.equal(app.element('#party-bar').hidden, true);
+    assert.equal(app.element('#party-start').hidden, false);
 });

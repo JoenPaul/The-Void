@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -12,6 +13,55 @@ use Illuminate\Validation\ValidationException;
 
 class WatchPartyController extends Controller
 {
+    public function invitations(Request $request): JsonResponse
+    {
+        $profile = $this->authorizeCurrentProfile($request);
+        $invitations = DB::table('watch_party_invitations as invitation')
+            ->join('watch_parties as party', 'party.code', '=', 'invitation.party_code')
+            ->join('viewer_profiles as host', 'host.id', '=', 'party.host_profile_id')
+            ->join('watch_party_members as presence', function (JoinClause $join): void {
+                $join->on('presence.party_code', '=', 'party.code')
+                    ->on('presence.profile_id', '=', 'party.host_profile_id');
+            })
+            ->where('invitation.profile_id', $profile->id)
+            ->where('party.host_profile_id', '!=', $profile->id)
+            ->whereNull('host.deleted_at')
+            ->where('presence.last_seen_at', '>=', now()->subMinutes(2)->format('Y-m-d H:i:s.u'))
+            ->orderByDesc('invitation.created_at')
+            ->orderBy('party.code')
+            ->get(['party.code', 'party.details', 'host.name as host_name'])
+            ->map(fn (object $party): array => [
+                'code' => $party->code,
+                'title' => json_decode($party->details, true)['title'],
+                'host_name' => $party->host_name,
+            ]);
+
+        return response()->json(['invitations' => $invitations])->header('Cache-Control', 'private, no-store');
+    }
+
+    public function invite(Request $request, string $code): JsonResponse
+    {
+        $profile = $this->authorizeCurrentProfile($request);
+
+        return DB::transaction(function () use ($request, $code, $profile): JsonResponse {
+            $party = DB::table('watch_parties')->where('code', $code)->lockForUpdate()->first();
+            abort_unless($party !== null, 404, 'This watch party has ended or does not exist.');
+            abort_unless($party->host_profile_id === $profile->id, 403, 'Only the host can invite profiles.');
+
+            $data = $request->validate([
+                'profile_id' => ['required', 'string', 'max:64', Rule::notIn([$profile->id]), Rule::exists('viewer_profiles', 'id')->whereNull('deleted_at')],
+            ]);
+
+            DB::table('watch_party_invitations')->upsert([
+                'party_code' => $code,
+                'profile_id' => $data['profile_id'],
+                'created_at' => now(),
+            ], ['party_code', 'profile_id'], ['created_at']);
+
+            return response()->json(['invited' => true]);
+        }, 3);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $profile = $this->authorizeCurrentProfile($request);
@@ -132,7 +182,7 @@ class WatchPartyController extends Controller
 
     private function authorizeCurrentProfile(Request $request): object
     {
-        $profileId = (string) $request->session()->get('viewer.id', '');
+        $profileId = ProfileAuthController::currentProfileId($request);
         abort_if($profileId === '', 401, 'Enter your profile PIN to continue.');
 
         return ProfileAuthController::authorize($profileId);

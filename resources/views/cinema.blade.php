@@ -24,7 +24,21 @@
             <button class="nav-link" data-page="Series"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 3v4M16 3v4"/></svg>Series</button>
             <button class="nav-link" data-page="My list"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v17l-6-4-6 4V4Z"/></svg>My list</button>
         </nav>
-        <div class="header-actions"><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" maxlength="100" placeholder="Search titles…" aria-label="Search titles"></label><div class="profile-menu-wrap"><button id="switch-profile" class="profile-switch" aria-label="Profile menu" aria-expanded="false" aria-controls="profile-menu"><span id="profile-avatar">J</span><span id="profile-name">Profile</span><span>⌄</span></button><div id="profile-menu" hidden><button id="profile-settings">Settings</button><button id="profile-signout">Sign out</button></div></div></div>
+        <div class="header-actions">
+            <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" maxlength="100" placeholder="Search titles…" aria-label="Search titles"></label>
+            <div id="party-notifications" hidden>
+                <button id="party-notification-toggle" type="button" aria-label="Watch party invitations" aria-expanded="false" aria-controls="party-invitations">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-8 12a2 2 0 0 0 4 0"/></svg>
+                    <span id="party-invitation-count" aria-hidden="true" hidden></span>
+                </button>
+                <section id="party-invitations" aria-labelledby="party-invitations-title" hidden>
+                    <h2 id="party-invitations-title">Watch party invitations</h2>
+                    <p id="party-invitations-empty">No active invitations.</p>
+                    <ul id="party-invitations-list"></ul>
+                </section>
+            </div>
+            <div class="profile-menu-wrap"><button id="switch-profile" class="profile-switch" aria-label="Profile menu" aria-expanded="false" aria-controls="profile-menu"><span id="profile-avatar">J</span><span id="profile-name">Profile</span><span>⌄</span></button><div id="profile-menu" hidden><button id="profile-settings">Settings</button><button id="profile-signout">Sign out</button></div></div>
+        </div>
     </header>
     <main id="browse">
         <section class="hero release-carousel" aria-label="Newly released movies" aria-roledescription="carousel">
@@ -38,7 +52,7 @@
         </section>
         <section class="library">
             <div class="discovery-heading"><div><p class="eyebrow">A LITTLE ESCAPE. A WHOLE NEW WORLD.</p><h2 id="section-title">Find your kind of story<span>.</span></h2></div><span class="collection-note">Curated for your next movie night</span></div>
-            <div class="filters" aria-label="Filter by genre">@foreach ($genres as $genre)<button class="filter {{ $loop->first ? 'active' : '' }}" data-genre="{{ $genre }}" data-types="{{ in_array($genre, $movieGenres, true) ? 'Movies' : '' }} {{ in_array($genre, $seriesGenres, true) ? 'Series' : '' }}" aria-pressed="{{ $loop->first ? 'true' : 'false' }}">{{ $genre }}</button>@endforeach</div>
+            <div class="filters" role="group" aria-label="Filter by genre" tabindex="0">@foreach ($genres as $genre)<button class="filter {{ $loop->first ? 'active' : '' }}" data-genre="{{ $genre }}" data-types="{{ in_array($genre, $movieGenres, true) ? 'Movies' : '' }} {{ in_array($genre, $seriesGenres, true) ? 'Series' : '' }}" aria-pressed="{{ $loop->first ? 'true' : 'false' }}">{{ $genre }}</button>@endforeach</div>
             <div class="catalog-status"><p id="catalog-status" role="status"></p><button id="catalog-retry" class="secondary" hidden>Try again</button></div>
             <div id="catalog" aria-busy="false"></div>
             <div class="load-more"><button id="load-more" class="secondary" hidden>Explore more titles ↓</button></div>
@@ -92,10 +106,17 @@
                 <span id="party-members" class="party-members"></span>
             </div>
             <div class="party-actions">
+                <button id="party-invite" class="secondary" type="button" aria-expanded="false" aria-controls="party-invite-form" hidden>Invite profile</button>
                 <button id="party-copy" class="secondary" type="button">Copy invite link</button>
                 <button id="party-sync" class="secondary" type="button" hidden>Sync to host</button>
                 <button id="party-end" class="secondary" type="button">End party</button>
             </div>
+            <form id="party-invite-form" class="party-actions" hidden>
+                <label for="party-invite-profile">Profile</label>
+                <select id="party-invite-profile" required></select>
+                <button id="party-invite-send" class="secondary" type="submit">Send invite</button>
+                <span id="party-invite-status" role="status"></span>
+            </form>
         </section>
         <p id="player-status" role="status"></p>
         <div id="player-frame"></div>

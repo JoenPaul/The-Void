@@ -98,6 +98,33 @@ class CatalogTest extends TestCase
         Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/discover/tv') && $request['with_genres'] === 10759);
     }
 
+    public function test_anime_discovery_and_search_include_only_japanese_animation(): void
+    {
+        $movies = [
+            [...$this->movie(), 'genre_ids' => [16], 'original_language' => 'ja'],
+            [...$this->movie(), 'id' => 43, 'genre_ids' => [16], 'original_language' => 'en'],
+            [...$this->movie(), 'id' => 44, 'genre_ids' => [18], 'original_language' => 'ja'],
+        ];
+        Http::fake([
+            'api.themoviedb.org/3/discover/movie*' => Http::response(['results' => $movies, 'total_pages' => 2]),
+            'api.themoviedb.org/3/search/movie*' => Http::response(['results' => $movies, 'total_pages' => 1]),
+            'api.themoviedb.org/3/discover/tv*' => Http::response(['results' => [
+                ['id' => 88, 'name' => 'Anime series', 'genre_ids' => [16], 'original_language' => 'ja'],
+            ], 'total_pages' => 1]),
+        ]);
+
+        $this->getJson('/catalog?genre=Anime')->assertOk()->assertJsonCount(2, 'results')
+            ->assertJsonPath('results.0.genres', ['Animation', 'Anime'])
+            ->assertJsonPath('results.1.id', 'tv:88')->assertJsonPath('has_more', true);
+        foreach (['movie', 'tv'] as $type) {
+            Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/discover/'.$type)
+                && $request['with_genres'] === 16 && $request['with_original_language'] === 'ja');
+        }
+
+        $this->getJson('/catalog?type=movie&genre=Anime&q=Space')->assertOk()->assertJsonCount(1, 'results');
+        $this->getJson('/catalog?type=movie&genre=Animation')->assertOk()->assertJsonCount(2, 'results');
+    }
+
     public function test_new_movie_genres_and_tv_categories_are_classified_and_filterable(): void
     {
         Http::fake([

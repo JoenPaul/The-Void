@@ -102,21 +102,29 @@ const searchCache = new Map();
 const avatarSymbols = {moon:'☾',star:'✦',orbit:'◈'};
 const avatarFor = profile => avatarSymbols[profile.avatar] || profile.name.slice(0,1).toUpperCase();
 const avatarClass = profile => ['violet','moon','star','orbit'].includes(profile.avatar) ? profile.avatar : 'violet';
+let viewerToken = null;
 
 async function profileRequest(path, method = 'GET', body, options = {}) {
     const response = await fetch(path, {
         ...options,
         method, credentials:'same-origin',
-        headers: {Accept:'application/json', 'Content-Type':'application/json', 'X-CSRF-TOKEN':$('meta[name="csrf-token"]').content},
+        headers: {Accept:'application/json', 'Content-Type':'application/json', 'X-CSRF-TOKEN':$('meta[name="csrf-token"]').content,
+            ...(/^\/profiles\/[^/]+\/login$/.test(path) ? {'X-Viewer-Tab':'1'} : {}),
+            ...(viewerToken ? {'X-Viewer-Token':viewerToken} : {})},
         ...(body ? {body:JSON.stringify(body)} : {}),
     });
     if (!response.ok) {
         if (response.status === 429) throw new Error('Too many attempts. Please wait one minute and try again.');
         if (response.status === 419) throw new Error('Your session expired. Refresh the page and try again.');
         const error = await response.json().catch(() => ({}));
-        throw new Error(response.status === 422 ? Object.values(error.errors || {}).flat()[0] || 'Please check the profile details.' : ([401,403].includes(response.status) ? error.message : 'Could not reach your saved profiles. Please try again.'));
+        const failure = new Error(response.status === 422 ? Object.values(error.errors || {}).flat()[0] || 'Please check the profile details.' : ([401,403].includes(response.status) ? error.message : 'Could not reach your saved profiles. Please try again.'));
+        failure.status = response.status;
+        throw failure;
     }
-    return response.json();
+    const result = await response.json();
+    if (result.viewer_token) viewerToken = result.viewer_token;
+    if (path === '/profile-logout') viewerToken = null;
+    return result;
 }
 function titlePayload(movie) {
     return {title:movie.title,year:String(movie.year),type:movie.type,genre:movie.genre,genres:movie.genres || [movie.genre],rating:String(movie.rating),image:movie.image || null,description:movie.description,source_url:movie.source_url || null};
@@ -210,6 +218,7 @@ async function enterProfile(id) {
         $('#profile-error').textContent = '';
         updateProfile();
         render();
+        if (typeof startPartyInvitationPolling === 'function') startPartyInvitationPolling();
         if (typeof enterPendingWatchParty === 'function') enterPendingWatchParty();
         return true;
     } catch (error) { $('#profile-error').textContent = error.message; return false; }
@@ -260,6 +269,7 @@ async function confirmProfileTransition() {
             if (typeof closePlayer === 'function') closePlayer();
             await profileRequest('/profile-logout', 'POST');
             activeProfile = null;
+            if (typeof stopPartyInvitationPolling === 'function') stopPartyInvitationPolling();
             write('void.active',null);
             $('#profile-name').textContent = 'Choose profile';
             $('#profile-avatar').textContent = '?';
@@ -517,7 +527,7 @@ function genreRows(items) {
 function updateGenreFilters() {
     let reset = false;
     document.querySelectorAll('[data-genre]').forEach(button => {
-        button.hidden = page === 'Discover' ? !['All','Horror','Romance'].includes(button.dataset.genre)
+        button.hidden = page === 'Discover' ? !['All','Anime'].includes(button.dataset.genre)
             : (page === 'Movies' || page === 'Series') && !(button.dataset.types || '').includes(page);
         if (button.hidden && button.dataset.genre === genre) reset = true;
     });
@@ -547,8 +557,7 @@ function render() {
     if (typeof refreshReleaseRotation === 'function') refreshReleaseRotation();
     $('#browse').style.paddingTop = page !== 'Discover' || query ? '120px' : '0';
     $('.discovery-heading').hidden = page === 'Discover' && !query;
-    $('.filters').hidden = page === 'Discover';
-    $('.catalog-status').hidden = page === 'Discover' && !query && !requestFailed && !unavailableSources.length;
+    $('.catalog-status').hidden = page === 'Discover' && genre === 'All' && !query && !requestFailed && !unavailableSources.length;
     $('#section-title').textContent = query ? `Results for “${query}”` : page === 'My list' ? 'Your next movie night.' : page === 'Discover' ? 'Find your kind of story.' : `Explore ${page.toLowerCase()}.`;
     const rowPositions = [...$('#catalog').querySelectorAll('.genre-posters')].map(track => track.scrollLeft);
     $('#catalog').innerHTML = page !== 'My list' && genre === 'All' && !query && discoverRows ? renderDiscoverRows() : filtered.length
