@@ -445,7 +445,7 @@ test('the Anime filter is available on Discover and requests movies and series t
     }, new Map(), undefined, false, filters);
     await settle();
     assert.equal(filters[1].hidden, false);
-    assert.equal(filters[2].hidden, true);
+    assert.equal(filters[2].hidden, false);
 
     await app.run("genre = 'Anime'; loadCatalog()");
     assert.equal(requested.at(-1).get('type'), 'all');
@@ -474,7 +474,7 @@ test('Discover shows four short curated rows and opens a paginated genre gallery
     assert.doesNotMatch(app.element('#catalog').innerHTML,/Sci-Fi movies|Sci-Fi &amp; Fantasy series/);
     assert.equal((app.element('#catalog').innerHTML.match(/8 titles to explore/g) || []).length,4);
     assert.equal(calls.filter(params => params.get('collection') === 'recent').length,2);
-    assert.equal(filters.find(button => button.dataset.genre === 'Sci-Fi').hidden,true);
+    assert.equal(filters.find(button => button.dataset.genre === 'Sci-Fi').hidden,false);
     assert.equal(app.element('#load-more').hidden,true);
     assert.match(app.element('#catalog').innerHTML,/data-explore-genre="Romance"/);
     await app.run("openGenreGallery('Movies','Romance')");
@@ -1074,4 +1074,113 @@ test('the host keeps party controls until the server confirms the room ended', a
     await app.run('leaveWatchParty()');
     assert.equal(app.element('#party-bar').hidden, true);
     assert.equal(app.element('#party-start').hidden, false);
+});
+
+test('watch party drawer renders live participants and supports quick-invite chips', async () => {
+    const movie = title('movie:42','Dune: Part Two');
+    const invited = [];
+    const party = {
+        code:'ROOM999888', host_profile_id:'joen', host_name:'Joen', is_host:true,
+        title_key:movie.id, title:movie, position:15, is_playing:true,
+        members:[{id:'joen', name:'Joen', avatar:'violet'}, {id:'guest', name:'Guest', avatar:'moon'}],
+    };
+    const app = setup(async (url, options) => {
+        if (url === '/party') return {ok:true, json:async () => ({party})};
+        if (url === '/party/ROOM999888/invitations') {
+            invited.push(JSON.parse(options.body).profile_id);
+            return {ok:true, json:async () => ({invited:true})};
+        }
+        return response([movie]);
+    }, new Map([['void.active',JSON.stringify('joen')]]));
+    await settle();
+    await signInRememberedProfile(app);
+    await app.run("openPlayer('movie:42'); startWatchParty()");
+    assert.equal(app.element('#party-drawer').hidden, false);
+    assert.equal(app.element('#party-drawer-count').textContent, '2');
+    assert.match(app.element('#party-roster').innerHTML, /Joen \(You\).*Host · Controlling playback/);
+    assert.match(app.element('#party-roster').innerHTML, /Guest.*Synced · Following host/);
+    await app.run("quickInviteProfile('guest')");
+    assert.deepEqual(invited, ['guest']);
+});
+
+test('viewers can join a watch party by room code or full invite URL from the invitation panel', async () => {
+    const movie = title('movie:42','Severance');
+    const party = {code:'ROOM123456', host_profile_id:'joen', host_name:'Joen', is_host:false, title_key:movie.id, title:movie, position:30, is_playing:false};
+    const app = setup(async url => {
+        if (url === '/party-invitations') return {ok:true, json:async () => ({invitations:[{code:'ROOM123456', title:'Severance', host_name:'Joen'}]})};
+        if (url === '/party/ROOM123456') return {ok:true, json:async () => ({party})};
+        return response([movie]);
+    }, new Map([['void.active',JSON.stringify('guest')]]));
+    await settle();
+    await signInRememberedProfile(app);
+    assert.equal(app.element('#live-parties-strip').hidden, false);
+    assert.match(app.element('#live-parties-cards').innerHTML, /Severance.*Hosted by Joen/);
+    app.element('#party-code-input').value = 'https://the-void.local/?party=ROOM123456';
+    await app.element('#party-code-form').listeners.submit({preventDefault() {}});
+    assert.match(app.element('#player-frame').innerHTML, /embed\/movie\/42.*t=30/);
+    assert.equal(app.element('#party-code-input').value, '');
+});
+
+test('clicking a direct Watch Party CTA opens the player and starts a watch party room immediately', async () => {
+    const movie = title('movie:42','Dune: Part Two');
+    const party = {code:'DIRECT1234', host_profile_id:'joen', host_name:'Joen', is_host:true, title_key:movie.id, title:movie, position:0, is_playing:false, members:[{id:'joen',name:'Joen'}]};
+    const app = setup(async (url, options) => {
+        if (url === '/party' && options.method === 'POST') return {ok:true, json:async () => ({party})};
+        return response([movie]);
+    }, new Map([['void.active',JSON.stringify('joen')]]));
+    await settle();
+    await signInRememberedProfile(app);
+    await app.run("openAndStartWatchParty('movie:42')");
+    assert.equal(app.element('#player').open, true);
+    assert.equal(app.element('#party-bar').hidden, false);
+    assert.equal(app.element('#party-room-code').textContent, '#DIRECT1234');
+    assert.equal(app.element('#party-drawer').hidden, false);
+});
+
+test('series player renders interactive season pill tabs and prevents redundant reloads on active season', async () => {
+    let seasonCalls = 0;
+    const app = seriesPlayer(async url => {
+        seasonCalls++;
+        const s = url.endsWith('/2') ? 2 : 1;
+        return seasonResponse(s, [{number:1, name:`S${s} Pilot`, air_date:'2026-01-01', released:true}]);
+    });
+    await settle();
+    await signInRememberedProfile(app);
+    await app.run("openPlayer('tv:42')");
+    assert.equal(seasonCalls, 1);
+    assert.match(app.element('#season-pills').innerHTML, /Season 1 \(3\)/);
+    assert.match(app.element('#season-pills').innerHTML, /Season 2 \(2\)/);
+
+    // Clicking already-active Season 1 pill does not trigger a duplicate fetch
+    app.element('#season-pills').listeners.click({target:{closest:() => ({dataset:{seasonPill:'1'}, disabled:false})}});
+    await settle();
+    assert.equal(seasonCalls, 1);
+
+    // Clicking Season 2 pill switches season and loads episodes
+    app.element('#season-pills').listeners.click({target:{closest:() => ({dataset:{seasonPill:'2'}, disabled:false})}});
+    await settle();
+    assert.equal(seasonCalls, 2);
+    assert.match(app.element('#episode-tiles').innerHTML, /S2 Pilot/);
+});
+
+test('TV on-screen profile PIN keypad hides during sign-out confirmation and supports clear/backspace', async () => {
+    const app = setup(async () => response([]));
+    await settle();
+    app.run("selectProfile('joen')");
+    assert.equal(app.element('#entry-pin-keypad').hidden, false);
+    app.element('#entry-pin').value = '45678';
+    app.element('#entry-pin-backspace').listeners.click();
+    assert.equal(app.element('#entry-pin').value, '4567');
+    await app.run('confirmProfileTransition()');
+    assert.equal(app.run('activeProfile.id'), 'joen');
+
+    app.element('#profile-signout').listeners.click();
+    assert.equal(app.element('#entry-pin-keypad').hidden, true);
+    app.element('#cancel-profile-transition').listeners.click();
+
+    app.run("selectProfile('guest')");
+    assert.equal(app.element('#entry-pin-keypad').hidden, false);
+    app.element('#entry-pin').value = '99';
+    app.element('#entry-pin-clear').listeners.click();
+    assert.equal(app.element('#entry-pin').value, '');
 });

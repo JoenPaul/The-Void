@@ -100,8 +100,8 @@ const pendingSaves = new Set();
 const watchlistLoads = new Map(), watchlistErrors = new Map();
 const searchCache = new Map();
 const avatarSymbols = {moon:'☾',star:'✦',orbit:'◈'};
-const avatarFor = profile => avatarSymbols[profile.avatar] || profile.name.slice(0,1).toUpperCase();
-const avatarClass = profile => ['violet','moon','star','orbit'].includes(profile.avatar) ? profile.avatar : 'violet';
+const avatarFor = profile => avatarSymbols[profile?.avatar] || String(profile?.name || '?').slice(0,1).toUpperCase();
+const avatarClass = profile => ['violet','moon','star','orbit'].includes(profile?.avatar) ? profile.avatar : 'violet';
 let viewerToken = null;
 
 async function profileRequest(path, method = 'GET', body, options = {}) {
@@ -180,7 +180,6 @@ async function loadProfiles() {
         profilesReady = true;
         write('void.profiles', profiles);
         $('#profile-error').textContent = '';
-        if (activeProfile) { write('void.active',activeProfile.id); $('#profiles').close(); updateProfile(); }
     } catch (error) {
         activeProfile = null;
         $('#profile-error').textContent = error.message;
@@ -197,13 +196,16 @@ async function selectProfile(id) {
     const profile = profiles.find(item => item.id === id);
     if (!profile) return;
     profileTransition = {action:'enter',id};
+    renderProfiles();
     $('#entry-pin').value = '';
     $('#entry-pin-label').hidden = false;
+    if ($('#entry-pin-keypad')) $('#entry-pin-keypad').hidden = false;
     $('#profile-confirm-title').textContent = 'Watch as ' + profile.name + '?';
     $('#profile-confirm-description').textContent = 'Enter your PIN to unlock this profile.';
     $('#confirm-profile-transition').textContent = 'Enter profile';
     $('#profile-transition-error').textContent = '';
     $('#profile-confirmation').showModal();
+    $('#entry-pin').focus();
 }
 async function enterProfile(id) {
     const profile = profiles.find(item => item.id === id);
@@ -231,6 +233,7 @@ function requestProfileLeave() {
     $('#profile-confirm-title').textContent = 'Leave ' + activeProfile.name + '’s profile?';
     $('#profile-confirm-description').textContent = 'Return to Who’s watching. Your watchlist and viewing history will stay saved.';
     $('#entry-pin-label').hidden = true;
+    if ($('#entry-pin-keypad')) $('#entry-pin-keypad').hidden = true;
     $('#confirm-profile-transition').textContent = 'Leave profile';
     $('#profile-transition-error').textContent = '';
     $('#profile-confirmation').showModal();
@@ -320,14 +323,18 @@ function resetProfileForm() {
 }
 
 function renderProfiles() {
-    $('#profile-cards').innerHTML = profiles.map(profile => `<button class="profile-card" data-profile="${escapeHtml(profile.id)}" ${!profilesReady || profileBusy ? 'disabled' : ''}><span class="avatar avatar-${avatarClass(profile)}">${escapeHtml(avatarFor(profile))}</span>${escapeHtml(profile.name)}</button>`).join('');
+    $('#profile-cards').innerHTML = profiles.map(profile => {
+        const selected = profileTransition?.action === 'enter' && profileTransition?.id === profile.id;
+        const status = selected ? '● Selected · Enter PIN' : '🔒 PIN Protected';
+        return `<button class="profile-card${selected ? ' is-selected' : ''}" data-profile="${escapeHtml(profile.id)}" ${!profilesReady || profileBusy ? 'disabled' : ''}><span class="avatar avatar-${avatarClass(profile)}">${escapeHtml(avatarFor(profile))}</span><strong class="profile-card-name">${escapeHtml(profile.name)}</strong><span class="profile-card-status">${status}</span></button>`;
+    }).join('');
     $('#profile-cards').querySelectorAll('button').forEach(button => button.addEventListener('click', () => selectProfile(button.dataset.profile)));
     $('#profile-cards').setAttribute('aria-busy',String(profileBusy));
     $('#save-profile').disabled = !profilesReady || profileBusy;
     $('#open-add-profile').disabled = !profilesReady || profileBusy;
     $('#cancel-edit').disabled = profileBusy;
     $('#profiles-title').textContent = 'Who’s watching?';
-    $('#profile-subtitle').textContent = 'Pick a profile. Find your escape.';
+    $('#profile-subtitle').textContent = 'Select your profile to resume watching or join an active Watch Party.';
 }
 function updateProfile() {
     if (!activeProfile) return;
@@ -527,8 +534,7 @@ function genreRows(items) {
 function updateGenreFilters() {
     let reset = false;
     document.querySelectorAll('[data-genre]').forEach(button => {
-        button.hidden = page === 'Discover' ? !['All','Anime'].includes(button.dataset.genre)
-            : (page === 'Movies' || page === 'Series') && !(button.dataset.types || '').includes(page);
+        button.hidden = (page === 'Movies' || page === 'Series') && !(button.dataset.types || '').includes(page);
         if (button.hidden && button.dataset.genre === genre) reset = true;
     });
     if (reset) genre = 'All';
@@ -544,6 +550,7 @@ function handleImageErrors(container) {
 }
 function render() {
     if (typeof renderWatchHistory === 'function') renderWatchHistory();
+    if (typeof renderLivePartiesStrip === 'function') renderLivePartiesStrip();
     const local = page === 'My list' || catalogMode !== 'tmdb';
     let filtered = page === 'My list' ? saved().map(id => titleIndex.get(id)).filter(Boolean) : catalog;
     if (local) {
@@ -657,9 +664,10 @@ function showDetails(id) {
     if (!currentMovie) return;
     const movie = currentMovie;
     const backdrop = typeof movie.backdrop === 'string' && /^https:\/\/image\.tmdb\.org\//.test(movie.backdrop) ? movie.backdrop : null;
-    $('#detail-content').innerHTML = `<div class="detail-band">${backdrop ? `<img src="${escapeHtml(backdrop)}" alt="">` : poster(movie)}</div><div class="detail-layout"><div class="detail-poster">${poster(movie)}</div><div class="detail-info"><h2 id="detail-title">${escapeHtml(movie.title)}</h2><div class="metadata">${movie.rating && movie.rating !== '—' ? `<b>★ ${escapeHtml(movie.rating)}</b>` : ''}<span>${escapeHtml(movie.release_date || movie.year)}</span><span>${movie.type === 'Series' ? 'Series' : 'Movie'}</span></div><div class="detail-genres">${(movie.genres || [movie.genre]).map(genre => `<span>${escapeHtml(genre)}</span>`).join('')}</div><p class="detail-overview">${escapeHtml(movie.description)}</p><div class="detail-actions"><button class="primary" id="detail-watch">${cinemaIcon('play')} Watch now</button><button class="secondary" id="detail-save"></button></div></div></div><div class="detail-footer">${sourceCredit(movie)}<p class="playback-note">Playback provided by CineSrc — availability and ads are controlled by the provider.</p></div>`;
+    $('#detail-content').innerHTML = `<div class="detail-band">${backdrop ? `<img src="${escapeHtml(backdrop)}" alt="">` : poster(movie)}</div><div class="detail-layout"><div class="detail-poster">${poster(movie)}</div><div class="detail-info"><h2 id="detail-title">${escapeHtml(movie.title)}</h2><div class="metadata">${movie.rating && movie.rating !== '—' ? `<b>★ ${escapeHtml(movie.rating)}</b>` : ''}<span>${escapeHtml(movie.release_date || movie.year)}</span><span>${movie.type === 'Series' ? 'Series' : 'Movie'}</span></div><div class="detail-genres">${(movie.genres || [movie.genre]).map(genre => `<span>${escapeHtml(genre)}</span>`).join('')}</div><p class="detail-overview">${escapeHtml(movie.description)}</p><div class="detail-actions"><button class="primary" id="detail-watch">${cinemaIcon('play')} Watch now</button><button class="secondary" id="detail-party" type="button">＋ Watch party</button><button class="secondary" id="detail-save"></button></div></div></div><div class="detail-footer">${sourceCredit(movie)}<p class="playback-note">Playback provided by CineSrc — availability and ads are controlled by the provider.</p></div>`;
     $('#detail-save').addEventListener('click', () => toggleSave(id));
     $('#detail-watch').addEventListener('click', () => openPlayer(id));
+    $('#detail-party').addEventListener('click', () => typeof openAndStartWatchParty === 'function' ? openAndStartWatchParty(id) : openPlayer(id));
     handleImageErrors($('#detail-content'));
     updateSaveButtons();
     $('#details').showModal();
@@ -695,8 +703,13 @@ $('#cancel-edit').addEventListener('click', () => { if (!profileBusy) resetProfi
 $('#retry-profiles').addEventListener('click', loadProfiles);
 $('#profiles').addEventListener('cancel', event => { if (!activeProfile) event.preventDefault(); });
 $('#confirm-profile-transition').addEventListener('click', confirmProfileTransition);
-$('#cancel-profile-transition').addEventListener('click', () => { if (!profileBusy) { profileTransition = null; $('#profile-confirmation').close(); } });
-$('#profile-confirmation').addEventListener('cancel', event => { if (profileBusy) event.preventDefault(); else profileTransition = null; });
+$('#cancel-profile-transition').addEventListener('click', () => { if (!profileBusy) { profileTransition = null; $('#profile-confirmation').close(); renderProfiles(); } });
+$('#profile-confirmation').addEventListener('cancel', event => { if (profileBusy) event.preventDefault(); else { profileTransition = null; renderProfiles(); } });
+$('#entry-pin-keypad')?.querySelectorAll('[data-entry-digit]').forEach(button => button.addEventListener('click', () => {
+    if (!profileBusy && $('#entry-pin').value.length < 12) $('#entry-pin').value += button.dataset.entryDigit;
+}));
+$('#entry-pin-clear')?.addEventListener('click', () => { if (!profileBusy) $('#entry-pin').value = ''; });
+$('#entry-pin-backspace')?.addEventListener('click', () => { if (!profileBusy) $('#entry-pin').value = $('#entry-pin').value.slice(0, -1); });
 $('.close').addEventListener('click', () => $('#details').close());
 $('#details').addEventListener('click', event => {
     if (event.target !== $('#details')) return;
@@ -747,6 +760,78 @@ $('#search').addEventListener('input', event => {
     hasMore = false;
     render();
     searchTimer = setTimeout(() => loadCatalog(), 250);
+});
+document.addEventListener('keydown', event => {
+    if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const tag = document.activeElement?.tagName;
+        if (['INPUT','TEXTAREA','SELECT'].includes(tag) || ['#profiles','#details','#player','#superadmin'].some(sel => $(sel)?.open)) return;
+        event.preventDefault();
+        $('#search')?.focus();
+        return;
+    }
+    if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
+    const active = document.activeElement;
+    if (active && ['INPUT','TEXTAREA','SELECT'].includes(active.tagName) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || active.tagName === 'SELECT')) return;
+    const dialogIds = ['#pin-settings','#admin-reset','#admin-pin-settings','#user-settings','#profile-confirmation','#profile-editor','#superadmin','#player','#details','#profiles'];
+    const openDialog = dialogIds.map(id => $(id)).find(dlg => dlg?.open);
+    const scope = openDialog || document;
+    const candidates = Array.from(scope.querySelectorAll?.('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled])') || [])
+        .filter(el => !el.hidden && !el.closest?.('[hidden]') && (typeof el.offsetParent === 'undefined' || el.offsetParent !== null || el.tagName === 'BUTTON'));
+    if (!candidates.length) return;
+    const currentIndex = candidates.indexOf(active);
+    if (currentIndex === -1) {
+        event.preventDefault();
+        candidates[0].focus();
+        return;
+    }
+    const rowGroup = active?.closest?.('.profile-cards-stage, .browse-nav, .filters, .hero-buttons, .genre-posters, .recent-grid, .live-parties-layout, .season-pills, .party-actions, .party-quick-chips, .detail-actions, .archive-actions');
+    if (rowGroup && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        const rowItems = candidates.filter(el => rowGroup.contains?.(el) && !el.classList?.contains?.('poster-save'));
+        const rowIdx = rowItems.indexOf(active);
+        if (rowIdx !== -1) {
+            const nextItem = rowItems[rowIdx + (event.key === 'ArrowRight' ? 1 : -1)];
+            if (nextItem) {
+                event.preventDefault();
+                nextItem.focus();
+                nextItem.scrollIntoView?.({block:'nearest', inline:'center', behavior:'smooth'});
+            }
+            return;
+        }
+    }
+    if (typeof active?.getBoundingClientRect === 'function') {
+        const rect = active.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+        let best = null, bestScore = Infinity;
+        for (const el of candidates) {
+            if (el === active || el.classList?.contains?.('poster-save')) continue;
+            const r = el.getBoundingClientRect?.();
+            if (!r || (r.width === 0 && r.height === 0)) continue;
+            const tx = r.left + r.width / 2, ty = r.top + r.height / 2;
+            const dx = tx - cx, dy = ty - cy;
+            const valid = event.key === 'ArrowRight' ? dx > 6 && Math.abs(dy) < Math.max(rect.height, dx * 1.2)
+                : event.key === 'ArrowLeft' ? dx < -6 && Math.abs(dy) < Math.max(rect.height, -dx * 1.2)
+                : event.key === 'ArrowDown' ? dy > 6
+                : dy < -6;
+            if (!valid) continue;
+            const primary = (event.key === 'ArrowLeft' || event.key === 'ArrowRight') ? Math.abs(dx) : Math.abs(dy);
+            const secondary = (event.key === 'ArrowLeft' || event.key === 'ArrowRight') ? Math.abs(dy) : Math.abs(dx);
+            const score = primary + secondary * 2.5;
+            if (score < bestScore) { bestScore = score; best = el; }
+        }
+        if (best) {
+            event.preventDefault();
+            best.focus();
+            best.scrollIntoView?.({block:'nearest', inline:'center', behavior:'smooth'});
+            return;
+        }
+    }
+    const delta = (event.key === 'ArrowRight' || event.key === 'ArrowDown') ? 1 : -1;
+    const fallback = candidates[currentIndex + delta];
+    if (fallback) {
+        event.preventDefault();
+        fallback.focus();
+        fallback.scrollIntoView?.({block:'nearest', inline:'center', behavior:'smooth'});
+    }
 });
 $('#load-more').addEventListener('click', () => loadCatalog(true));
 $('#catalog-retry').addEventListener('click', () => {

@@ -1,58 +1,51 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# The Void — Cinema & Watch Party Platform
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+**The Void** is a dark-themed streaming discovery and synchronized Watch Party web application built with **Laravel 13 (PHP 8.5)**, **FrankenPHP / Caddy**, **TMDB API**, and **CineSrc**.
 
-## About Laravel
+**Figma Design System & UI Redesign:** [The Void — Watch Party & Cinema UI Redesign](https://www.figma.com/design/Rl20vp3jH2mmIqZvIhv5F3)
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+---
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Major Changes & Features
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+### 1. Watch Party Theater & Social Discovery
+- **Split Watch Party Theater (`#player`):** Expands into a split workspace featuring the 16:9 player on the left and a dedicated **Participants Drawer** (`#party-drawer`) on the right showing live viewer avatars, display names, host badges, and real-time sync indicators.
+- **1-Click Quick Invite Profile Chips:** Hosts can invite other profiles in a single click directly from the Watch Party drawer (`#party-quick-chips`) or via the accessible profile selector (`#party-invite-form`).
+- **Direct Watch Party Entry Points:** Added **`＋ Watch party`** CTAs directly on the **Hero Release Carousel** and **Title Details Modal** (`openAndStartWatchParty`) so hosts can launch a room in one click.
+- **Live Watch Parties Home Strip (`#live-parties-strip`):** Surfaces active watch party invitations and a **Have a Room Code?** quick-entry form right on the Discover home screen.
+- **Join via Room Code or Invite URL:** Both the header invitations popover (`#party-invitations`) and the home strip accept either a 6–24 character room code (`#ROOM123456`) or a full invite link (`https://.../?party=ROOM123456`).
+- **Host-Locked Guest Sync & Visibility-Aware Polling:** Guests automatically follow host play, pause, seek, and episode changes without affecting their solo watch progress. Polling adapts from `4s` (active tab) to `12s` (background tab) and immediately resyncs on tab focus.
 
-## Learning Laravel
+### 2. Overall Cinema UI Redesign (Desktop, Mobile & Smart TV)
+- **Flat Dark-Violet Surface System:** Uses high-contrast solid surfaces (`#09080D`, `#141219`, `#1B1626`, `#231D30`, `#2A1B4A`, `#9959FF`) with zero decorative gradients.
+- **Hero Carousel & "Up Next" Spotlight:** Displays `4K HDR` and `★ TMDB` metadata chips alongside an **Up Next in Carousel** spotlight panel (`.hero-spotlight`) allowing viewers to jump directly to upcoming releases.
+- **Widescreen 16:9 "Continue Watching" Rail:** Displays episode badges (`S02 · E04` or `MOVIE`), watched/remaining time pills, and full-width progress bars.
+- **Full Genre Filtering & Series Season Pill Tabs:** All movie and series genre filters are available directly on **Discover**, and the Series player provides interactive **Season Pill Tabs** (`#season-pills`) above 3-column episode cards.
+- **Mobile-Responsive Navigation:** Pins the 4-tab navigation bar (`.browse-nav`) to the bottom of mobile viewports while keeping the top header (brand, expandable search, notifications bell, and profile menu) sticky and accessible.
+- **Smart TV / 10-Foot Living-Room Optimizations:**
+  - **D-Pad Spatial Arrow-Key Navigation:** `ArrowLeft`, `ArrowRight`, `ArrowUp`, and `ArrowDown` navigate across profile cards, rails, filter pills, keypad buttons, and modals while centering focused items in view.
+  - **On-Screen PIN Keypads:** Both Profile Login (`#entry-pin-keypad`) and Superadmin Login (`#superadmin-login`) provide on-screen `0–9` keypads for TV remotes.
+  - **10-Foot Scaling & Low-Power GPU Mode:** Scales `#player`, typography, and 4-column episode grids on `1600px+` / 4K screens and replaces heavy CSS backdrop blurs with high-opacity flat backdrops for smooth performance on Smart TV browsers.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+### 3. Four-Layer Caching & Performance Architecture
+1. **CDN / Edge HTTP Caching (`App\Http\Middleware\CachePublicResponse`):** Public, non-personalized routes (`/catalog`, `/releases`, `/playback/{title}`, `/playback/tv/{series}/season/{season}`) strip session/cookie middleware and emit `Cache-Control` and `CDN-Cache-Control` headers with `s-maxage` and `stale-while-revalidate`.
+2. **Server-Side TMDB Cache (`CatalogController` & `PlaybackController`):** Caches popular genre feeds for 30 minutes (`1800s`), series metadata for 1 hour (`3600s`), and search/releases/episodes for 5 minutes (`300s`).
+3. **Immutable Static Assets (`Caddyfile`):** Serves versioned `/css/*` and `/js/*` assets with `Cache-Control: public, max-age=31536000, immutable` and `zstd` / `gzip` compression.
+4. **Client-Side Memory & `sessionStorage` Cache:** Caches genre discovery rows (`void.genre.*`) and search results in the browser for instant tab switching.
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+---
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+## Testing
 
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+Run the frontend Node UI test suite (55 tests) and backend PHPUnit feature/unit test suite (51 tests):
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+node --test tests/catalog-ui.test.cjs
+php artisan test
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+---
 
-## Contributing
+## Deployment (Render)
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+The application deploys automatically on **Render** from the `main` branch using `Dockerfile.vercel` (FrankenPHP + PHP 8.5 Alpine + `Caddyfile`). On container startup, database migrations and `SuperadminSeeder` run automatically before FrankenPHP starts serving traffic.

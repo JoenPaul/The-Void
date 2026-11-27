@@ -42,10 +42,11 @@ function renderWatchHistory() {
     $('#recent-content').innerHTML = entries.length ? `<div class="recent-grid">${entries.map(entry => {
         const date = new Date(entry.watched_at);
         const when = Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(date);
-        const episode = entry.type === 'Series' ? `S${String(entry.season).padStart(2,'0')} · E${String(entry.episode).padStart(2,'0')} · ` : '';
+        const episodeBadge = entry.type === 'Series' ? `S${String(entry.season).padStart(2,'0')} · E${String(entry.episode).padStart(2,'0')}` : 'MOVIE';
+        const episode = entry.type === 'Series' ? `${episodeBadge} · ` : '';
         const status = entry.finished ? 'Watched' : Math.floor(entry.position / 60) > 0 ? `${Math.floor(entry.position / 60)} min watched` : 'Just started';
         const percent = Math.max(0,Math.min(100,entry.finished ? 100 : (entry.position / entry.duration) * 100));
-        return card(entry).replace('class="movie-card"','class="movie-card recent-card"').replace('</button>',`<p class="recent-caption">${escapeHtml(episode + status)}<span>${escapeHtml(when)}</span></p><span class="recent-progress" aria-hidden="true"><span style="width:${percent}%"></span></span></button>`);
+        return card(entry).replace('class="movie-card"','class="movie-card recent-card"').replace('</button>',`<span class="recent-top-row"><span class="recent-ep-badge">${escapeHtml(episodeBadge)}</span><span class="recent-time-pill">${escapeHtml(status)}</span></span><p class="recent-caption">${escapeHtml(episode + status)}<span>${escapeHtml(when)}</span></p><span class="recent-progress" aria-hidden="true"><span style="width:${percent}%"></span></span></button>`);
     }).join('')}</div>` : !historyLoading.has(id) && !historyErrors.has(id) ? '<p class="history-empty">Your next movie night starts here. Titles appear after you begin watching.</p>' : '';
     $('#recent-content').querySelectorAll('[data-movie]').forEach(button => button.addEventListener('click', () => openPlayer(button.dataset.movie)));
     bindSaveButtons($('#recent-content'));

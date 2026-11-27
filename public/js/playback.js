@@ -7,6 +7,7 @@ let activeParty = null, partyPollTimer = null, pendingPartyCode = null, applying
 let partyPollRequest = null, partyStateWrite = Promise.resolve();
 let partyInvitations = [], invitationPollTimer = null, invitationPollController = null;
 let invitationPanelPinned = false, renderedInvitationList = '';
+let invitedProfileIds = new Set(), invitedPartyCode = null;
 
 try {
     const partyParam = new URLSearchParams(window.location?.search || '').get('party');
@@ -144,9 +145,16 @@ async function loadSeasonEpisodes(progress = null, autoPlay = false) {
         if (version === episodeRequestVersion && playerVersion === playbackVersion) $('#episode-tiles').setAttribute('aria-busy','false');
     }
 }
+function renderSeasonPills() {
+    const pills = $('#season-pills');
+    if (!pills || playbackData?.type !== 'tv' || !Array.isArray(playbackData.seasons)) return;
+    const locked = Boolean(activeParty && !activeParty.is_host);
+    pills.innerHTML = playbackData.seasons.map(season => `<button type="button" class="season-pill${season.number === playbackSeason ? ' active' : ''}" data-season-pill="${season.number}" aria-selected="${season.number === playbackSeason}" ${locked ? 'disabled' : ''}>${escapeHtml(season.name)} (${season.episodes})</button>`).join('');
+}
 function renderEpisodeTiles() {
     const locked = Boolean(activeParty && !activeParty.is_host);
-    $('#episode-tiles').innerHTML = seasonEpisodes.map(episode => `<button class="episode-tile" data-episode="${episode.number}" aria-pressed="${episode.number === playbackEpisode}" ${locked ? 'disabled' : ''}><span class="episode-number">Episode ${episode.number}</span><strong>${escapeHtml(episode.name || 'Episode ' + episode.number)}</strong><span class="episode-release">${episode.air_date ? 'Scheduled · ' + escapeHtml(episode.air_date) : 'Release date not announced'}</span></button>`).join('');
+    renderSeasonPills();
+    $('#episode-tiles').innerHTML = seasonEpisodes.map(episode => `<button class="episode-tile" data-episode="${episode.number}" aria-pressed="${episode.number === playbackEpisode}" ${locked ? 'disabled' : ''}><span class="episode-number">EP ${String(episode.number).padStart(2, '0')}${episode.number === playbackEpisode ? ' · CURRENT' : ''}</span><strong>${escapeHtml(episode.name || 'Episode ' + episode.number)}</strong><span class="episode-release">${episode.air_date ? 'Scheduled · ' + escapeHtml(episode.air_date) : 'Release date not announced'}</span></button>`).join('');
     $('#episode-tiles').querySelectorAll('[data-episode]').forEach(button => button.addEventListener('click', () => playSelectedEpisode(Number(button.dataset.episode),playbackProgress()[playerProgressKey()])));
 }
 function playSelectedEpisode(number, progress, internalCall = false) {
@@ -290,6 +298,75 @@ function partyStatePayload(positionOverride = null, isPlayingOverride = null) {
         is_playing: isPlayingOverride !== null ? Boolean(isPlayingOverride) : playbackPlaying,
     };
 }
+function extractPartyCode(raw) {
+    const value = String(raw || '').trim();
+    if (!value) return '';
+    try {
+        if (/^https?:\/\//i.test(value)) {
+            const param = new URL(value).searchParams.get('party') || '';
+            return param.trim();
+        }
+    } catch {}
+    return value.replace(/^#/, '').trim();
+}
+function renderPartyRoster() {
+    const drawer = $('#party-drawer');
+    if (!drawer) return;
+    if (!activeParty) {
+        drawer.hidden = true;
+        return;
+    }
+    drawer.hidden = false;
+    if (invitedPartyCode !== activeParty.code) {
+        invitedPartyCode = activeParty.code;
+        invitedProfileIds = new Set();
+    }
+    const members = Array.isArray(activeParty.members) && activeParty.members.length
+        ? activeParty.members
+        : [{id: activeProfile?.id || 'me', name: activeProfile?.name || 'You', avatar: activeProfile?.avatar || 'violet'}];
+    const countEl = $('#party-drawer-count');
+    if (countEl) countEl.textContent = String(members.length);
+    const roster = $('#party-roster');
+    if (roster) {
+        roster.innerHTML = members.map(member => {
+            const isHostMember = member.id === activeParty.host_profile_id || (activeParty.is_host && member.id === activeProfile?.id);
+            const isYou = member.id === activeProfile?.id;
+            const roleLabel = isHostMember ? 'Host · Controlling playback' : 'Synced · Following host';
+            return `<li class="party-roster-item"><span class="party-roster-avatar avatar-${avatarClass(member)}">${escapeHtml(avatarFor(member))}</span><div class="party-roster-meta"><strong>${escapeHtml(member.name)}${isYou ? ' (You)' : ''}</strong><span>${roleLabel}</span></div><span class="party-roster-dot${isHostMember ? ' is-host' : ''}" aria-hidden="true"></span></li>`;
+        }).join('');
+    }
+    const quickWrap = $('#party-quick-invite');
+    const quickChips = $('#party-quick-chips');
+    if (quickWrap && quickChips) {
+        const otherProfiles = profiles.filter(profile => profile.id !== activeProfile?.id);
+        quickWrap.hidden = !activeParty.is_host || !otherProfiles.length;
+        if (!quickWrap.hidden) {
+            const memberIds = new Set(members.map(member => member.id));
+            quickChips.innerHTML = otherProfiles.map(profile => {
+                const joined = memberIds.has(profile.id);
+                const sent = invitedProfileIds.has(profile.id);
+                const label = joined ? `${profile.name} · In room` : sent ? `${profile.name} · Sent` : `＋ ${profile.name}`;
+                return `<button type="button" class="party-quick-chip${sent || joined ? ' is-invited' : ''}" data-quick-invite="${escapeHtml(profile.id)}" ${joined ? 'disabled' : ''}>${escapeHtml(label)}</button>`;
+            }).join('');
+        }
+    }
+}
+function renderLivePartiesStrip() {
+    const strip = $('#live-parties-strip');
+    const cards = $('#live-parties-cards');
+    if (!strip || !cards) return;
+    const visibleInvitations = partyInvitations.filter(invitation => invitation.code !== activeParty?.code);
+    const show = Boolean(activeProfile && page === 'Discover' && !query);
+    strip.hidden = !show;
+    if (!show) return;
+    if (visibleInvitations.length) {
+        cards.innerHTML = visibleInvitations.map(invitation => `<article class="live-party-card"><div class="live-party-info"><strong>${escapeHtml(invitation.title)}</strong><span>Hosted by ${escapeHtml(invitation.host_name)} · Room #${escapeHtml(invitation.code)}</span></div><button type="button" class="primary" data-live-join="${escapeHtml(invitation.code)}">Join #${escapeHtml(invitation.code.slice(0, 6))}</button></article>`).join('');
+    } else if (activeParty) {
+        cards.innerHTML = `<article class="live-party-card"><div class="live-party-info"><strong>${escapeHtml(activeParty.title?.title || 'Active Watch Party')}</strong><span>Room #${escapeHtml(activeParty.code)} · ${activeParty.is_host ? 'You are hosting' : 'Hosted by ' + escapeHtml(activeParty.host_name)}</span></div><button type="button" class="primary" data-live-return="1">Return to Room</button></article>`;
+    } else {
+        cards.innerHTML = `<article class="live-party-card"><div class="live-party-info"><strong>Start a Synchronized Watch Party</strong><span>Open any movie or series and click “＋ Watch party” to invite profiles</span></div></article>`;
+    }
+}
 function renderPartyBar() {
     const locked = Boolean(activeParty && !activeParty.is_host);
     $('#player-season').disabled = locked;
@@ -304,6 +381,8 @@ function renderPartyBar() {
         $('#party-bar').hidden = true;
         $('#party-start').hidden = false;
         $('#party-start').disabled = partyBusy;
+        if ($('#party-room-code')) $('#party-room-code').hidden = true;
+        renderPartyRoster();
         return;
     }
     const isHost = Boolean(activeParty.is_host);
@@ -311,6 +390,11 @@ function renderPartyBar() {
     $('#party-start').hidden = true;
     $('#party-bar').hidden = false;
     $('#party-role-badge').textContent = isHost ? 'ADMIN · HOST' : 'GUEST · LOCKED';
+    const roomCodeEl = $('#party-room-code');
+    if (roomCodeEl) {
+        roomCodeEl.textContent = '#' + activeParty.code;
+        roomCodeEl.hidden = !activeParty.code;
+    }
     $('#party-summary').textContent = isHost
         ? `Room ${activeParty.code} · Only you can change or control the movie.`
         : `Hosted by ${activeParty.host_name} · Only the host can change or manipulate the movie.`;
@@ -320,6 +404,7 @@ function renderPartyBar() {
     $('#party-end-label').textContent = endLabel;
     $('#party-end').setAttribute('aria-label', endLabel);
     $('#party-end').title = endLabel;
+    renderPartyRoster();
 }
 function renderPartyInvitations() {
     const visibleInvitations = partyInvitations.filter(invitation => invitation.code !== activeParty?.code);
@@ -329,6 +414,11 @@ function renderPartyInvitations() {
     $('#party-notification-toggle').setAttribute('aria-label', count ? `Watch party invitations (${count})` : 'Watch party invitations');
     badge.textContent = count > 99 ? '99+' : String(count);
     badge.hidden = count === 0;
+    const headerBadge = $('#party-invitations-badge');
+    if (headerBadge) {
+        headerBadge.textContent = `${count} active`;
+        headerBadge.hidden = count === 0;
+    }
     $('#party-invitations-empty').hidden = count !== 0;
     const markup = visibleInvitations.map(invitation => `<li><div><strong>${escapeHtml(invitation.title)}</strong><br><small>Invited by ${escapeHtml(invitation.host_name)}</small></div><button type="button" class="secondary" data-party-join="${escapeHtml(invitation.code)}" aria-label="Join watch party for ${escapeHtml(invitation.title)}">Join</button></li>`).join('');
     if (renderedInvitationList !== markup) {
@@ -341,6 +431,7 @@ function renderPartyInvitations() {
             (button || $('#party-notification-toggle')).focus();
         }
     }
+    renderLivePartiesStrip();
 }
 function showInvitationPanel(open) {
     const wasHidden = $('#party-invitations').hidden;
@@ -376,7 +467,8 @@ async function pollPartyInvitations() {
         }
     } catch {} finally {
         if (!signal.aborted && activeProfile?.id === profileId) {
-            invitationPollTimer = setTimeout(pollPartyInvitations, $('#party-invitations').hidden ? 15000 : 5000);
+            const delay = document.hidden ? 60000 : ($('#party-invitations').hidden ? 15000 : 5000);
+            invitationPollTimer = setTimeout(pollPartyInvitations, delay);
         }
     }
 }
@@ -403,11 +495,40 @@ async function sendPartyInvitation(event) {
     status.textContent = '';
     try {
         await profileRequest('/party/' + encodeURIComponent(code) + '/invitations', 'PUT', {profile_id:profileId});
-        if (activeParty?.code === code) status.textContent = 'Invitation sent.';
+        if (activeParty?.code === code) {
+            invitedProfileIds.add(profileId);
+            status.textContent = 'Invitation sent.';
+            renderPartyRoster();
+        }
     } catch (error) {
         if (activeParty?.code === code) status.textContent = error.status === 404 ? 'This watch party has ended.' : error.message;
     } finally {
         submit.disabled = false;
+    }
+}
+async function quickInviteProfile(profileId) {
+    if (!activeParty?.is_host || !profileId) return;
+    const code = activeParty.code;
+    try {
+        await profileRequest('/party/' + encodeURIComponent(code) + '/invitations', 'PUT', {profile_id:profileId});
+        if (activeParty?.code === code) {
+            invitedProfileIds.add(profileId);
+            renderPartyRoster();
+            const target = profiles.find(profile => profile.id === profileId);
+            notify(`Invited ${target?.name || 'profile'} to your watch party.`);
+        }
+    } catch (error) {
+        notify(error.status === 404 ? 'This watch party has ended.' : error.message);
+    }
+}
+async function openAndStartWatchParty(id) {
+    if (!activeProfile || !profilesReady) {
+        if (!$('#profiles').open) $('#profiles').showModal();
+        return;
+    }
+    await openPlayer(id);
+    if (!activeParty && playbackTitle?.id === id && playbackData && (playbackData.type !== 'tv' || playbackEpisode)) {
+        await startWatchParty();
     }
 }
 async function copyPartyInviteLink() {
@@ -431,10 +552,11 @@ function stopPartyPolling() {
 function schedulePartyPoll() {
     stopPartyPolling();
     if (!activeParty) return;
+    const delay = typeof document !== 'undefined' && document.hidden ? 12000 : 4000;
     partyPollTimer = setTimeout(async () => {
         await pollWatchParty();
         if (activeParty) schedulePartyPoll();
-    }, 4000);
+    }, delay);
 }
 async function startWatchParty() {
     if (partyBusy || !activeProfile || !playbackTitle || !playbackData) return;
@@ -675,3 +797,49 @@ $('#party-invitations-list').addEventListener('click', async event => {
 $('#party-copy').addEventListener('click', copyPartyInviteLink);
 $('#party-sync').addEventListener('click', () => pollWatchParty(true));
 $('#party-end').addEventListener('click', () => leaveWatchParty(false));
+$('#party-quick-chips')?.addEventListener('click', event => {
+    const chip = event.target?.closest?.('[data-quick-invite]');
+    if (chip && !chip.disabled) quickInviteProfile(chip.dataset.quickInvite);
+});
+$('#live-parties-cards')?.addEventListener('click', event => {
+    const btn = event.target?.closest?.('[data-live-join]');
+    if (btn) { joinWatchParty(btn.dataset.liveJoin); return; }
+    const ret = event.target?.closest?.('[data-live-return]');
+    if (ret && activeParty && !$('#player').open) $('#player').showModal();
+});
+$('#season-pills')?.addEventListener('click', event => {
+    const pill = event.target?.closest?.('[data-season-pill]');
+    if (!pill || pill.disabled || Number(pill.dataset.seasonPill) === playbackSeason) return;
+    $('#player-season').value = pill.dataset.seasonPill;
+    $('#player-season').listeners?.change ? $('#player-season').listeners.change() : $('#player-season').dispatchEvent?.(new Event('change'));
+});
+$('#strip-party-code-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const input = $('#strip-party-code-input');
+    const code = extractPartyCode(input?.value);
+    if (!/^[A-Za-z0-9]{6,24}$/.test(code)) {
+        notify('Enter a valid watch party code or invite link.');
+        return;
+    }
+    if (await joinWatchParty(code) && input) input.value = '';
+});
+$('#party-code-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const input = $('#party-code-input');
+    const code = extractPartyCode(input?.value);
+    if (!/^[A-Za-z0-9]{6,24}$/.test(code)) {
+        notify('Enter a valid watch party code or invite link.');
+        return;
+    }
+    if (await joinWatchParty(code)) {
+        if (input) input.value = '';
+        showInvitationPanel(false);
+    }
+});
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && invitationPollTimer && invitationPollController && !invitationPollController.signal.aborted) pollPartyInvitations();
+    if (!document.hidden && activeParty) {
+        pollWatchParty();
+        schedulePartyPoll();
+    }
+});
