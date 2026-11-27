@@ -27,6 +27,8 @@ RUN mkdir -p storage/framework/cache/data storage/framework/sessions storage/fra
 
 FROM base AS runtime
 
+RUN setcap -r /usr/local/bin/frankenphp
+
 ENV APP_ENV=production \
     APP_DEBUG=false \
     ASSET_URL=/ \
